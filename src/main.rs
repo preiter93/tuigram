@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 mod app;
 mod core;
 mod render;
@@ -47,7 +46,7 @@ fn run(diagram: SequenceDiagram) -> anyhow::Result<()> {
     execute!(std::io::stdout())?;
 
     let mut world = World::default();
-    app::setup_world_with_diagram(&mut world, diagram);
+    app::setup_world(&mut world, diagram);
 
     loop {
         terminal.draw(|frame| app::render(frame, &mut world))?;

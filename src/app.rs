@@ -1,10 +1,10 @@
 #![allow(clippy::too_many_lines)]
 
 use crate::{
-    core::{Event, SequenceDiagram},
-    render::{SequenceLayout, render_sequence},
+    core::SequenceDiagram,
+    render::render_sequence,
     theme::Theme,
-    ui::state::{EditorMode, EditorState, Selection},
+    ui::{EditorMode, EditorState, Selection},
     ui::{help::render_help, input::render_input_popup, status_bar::render_status_bar},
 };
 use ratatui::{
@@ -26,11 +26,7 @@ pub struct AppState {
     pub area: Rect,
 }
 
-pub fn setup_world(world: &mut World) {
-    setup_world_with_diagram(world, SequenceDiagram::new());
-}
-
-pub fn setup_world_with_diagram(world: &mut World, diagram: SequenceDiagram) {
+pub fn setup_world(world: &mut World, diagram: SequenceDiagram) {
     world.insert(Theme::default());
     world.insert(AppState::default());
     world.insert(diagram);
@@ -79,43 +75,23 @@ fn global_keybindings(world: &mut World) {
         let selection = world.get::<EditorState>().selection;
         match selection {
             Selection::Participant(idx) => {
-                let diagram = world.get_mut::<SequenceDiagram>();
-                if idx < diagram.participants.len() {
-                    diagram.participants.remove(idx);
-                    diagram.events.retain(|e| match e {
-                        Event::Message { from, to, .. } => *from != idx && *to != idx,
-                    });
-                    diagram.events.iter_mut().for_each(|e| {
-                        let Event::Message { from, to, .. } = e;
-                        if *from > idx {
-                            *from -= 1;
-                        }
-                        if *to > idx {
-                            *to -= 1;
-                        }
-                    });
-                }
+                world.get_mut::<SequenceDiagram>().remove_participant(idx);
                 let new_count = world.get::<SequenceDiagram>().participant_count();
                 let editor = world.get_mut::<EditorState>();
                 if new_count == 0 {
                     editor.clear_selection();
                 } else {
-                    let new_idx = idx.min(new_count - 1);
-                    editor.selection = Selection::Participant(new_idx);
+                    editor.selection = Selection::Participant(idx.min(new_count - 1));
                 }
             }
             Selection::Event(idx) => {
-                let diagram = world.get_mut::<SequenceDiagram>();
-                if idx < diagram.events.len() {
-                    diagram.events.remove(idx);
-                }
+                world.get_mut::<SequenceDiagram>().remove_event(idx);
                 let new_count = world.get::<SequenceDiagram>().event_count();
                 let editor = world.get_mut::<EditorState>();
                 if new_count == 0 {
                     editor.clear_selection();
                 } else {
-                    let new_idx = idx.min(new_count - 1);
-                    editor.selection = Selection::Event(new_idx);
+                    editor.selection = Selection::Event(idx.min(new_count - 1));
                 }
             }
             Selection::None => {
@@ -137,41 +113,9 @@ fn global_keybindings(world: &mut World) {
             let diagram = world.get::<SequenceDiagram>();
             let participant_count = diagram.participant_count();
             let event_count = diagram.event_count();
-            let total = participant_count + event_count;
-
-            if total == 0 {
-                return;
-            }
 
             let selection = world.get::<EditorState>().selection;
-            let new_selection = match selection {
-                Selection::None => {
-                    if participant_count > 0 {
-                        Selection::Participant(0)
-                    } else {
-                        Selection::Event(0)
-                    }
-                }
-                Selection::Participant(idx) => {
-                    if idx + 1 < participant_count {
-                        Selection::Participant(idx + 1)
-                    } else if event_count > 0 {
-                        Selection::Event(0)
-                    } else {
-                        Selection::Participant(0)
-                    }
-                }
-                Selection::Event(idx) => {
-                    if idx + 1 < event_count {
-                        Selection::Event(idx + 1)
-                    } else if participant_count > 0 {
-                        Selection::Participant(0)
-                    } else {
-                        Selection::Event(0)
-                    }
-                }
-            };
-
+            let new_selection = selection.cycle(participant_count, event_count);
             world.get_mut::<EditorState>().selection = new_selection;
         },
     );
@@ -192,41 +136,9 @@ fn global_keybindings(world: &mut World) {
             let diagram = world.get::<SequenceDiagram>();
             let participant_count = diagram.participant_count();
             let event_count = diagram.event_count();
-            let total = participant_count + event_count;
-
-            if total == 0 {
-                return;
-            }
 
             let selection = world.get::<EditorState>().selection;
-            let new_selection = match selection {
-                Selection::None => {
-                    if event_count > 0 {
-                        Selection::Event(event_count - 1)
-                    } else {
-                        Selection::Participant(participant_count - 1)
-                    }
-                }
-                Selection::Participant(idx) => {
-                    if idx > 0 {
-                        Selection::Participant(idx - 1)
-                    } else if event_count > 0 {
-                        Selection::Event(event_count - 1)
-                    } else {
-                        Selection::Participant(participant_count - 1)
-                    }
-                }
-                Selection::Event(idx) => {
-                    if idx > 0 {
-                        Selection::Event(idx - 1)
-                    } else if participant_count > 0 {
-                        Selection::Participant(participant_count - 1)
-                    } else {
-                        Selection::Event(event_count - 1)
-                    }
-                }
-            };
-
+            let new_selection = selection.cycle_back(participant_count, event_count);
             world.get_mut::<EditorState>().selection = new_selection;
         },
     );
@@ -241,21 +153,9 @@ fn global_keybindings(world: &mut World) {
         if let Selection::Participant(idx) = selection
             && idx > 0
         {
-            let diagram = world.get_mut::<SequenceDiagram>();
-            diagram.participants.swap(idx, idx - 1);
-            diagram.events.iter_mut().for_each(|e| {
-                let Event::Message { from, to, .. } = e;
-                if *from == idx {
-                    *from = idx - 1;
-                } else if *from == idx - 1 {
-                    *from = idx;
-                }
-                if *to == idx {
-                    *to = idx - 1;
-                } else if *to == idx - 1 {
-                    *to = idx;
-                }
-            });
+            world
+                .get_mut::<SequenceDiagram>()
+                .swap_participants(idx, idx - 1);
             world.get_mut::<EditorState>().selection = Selection::Participant(idx - 1);
         }
     });
@@ -270,21 +170,9 @@ fn global_keybindings(world: &mut World) {
         if let Selection::Participant(idx) = selection {
             let participant_count = world.get::<SequenceDiagram>().participant_count();
             if idx + 1 < participant_count {
-                let diagram = world.get_mut::<SequenceDiagram>();
-                diagram.participants.swap(idx, idx + 1);
-                diagram.events.iter_mut().for_each(|e| {
-                    let Event::Message { from, to, .. } = e;
-                    if *from == idx {
-                        *from = idx + 1;
-                    } else if *from == idx + 1 {
-                        *from = idx;
-                    }
-                    if *to == idx {
-                        *to = idx + 1;
-                    } else if *to == idx + 1 {
-                        *to = idx;
-                    }
-                });
+                world
+                    .get_mut::<SequenceDiagram>()
+                    .swap_participants(idx, idx + 1);
                 world.get_mut::<EditorState>().selection = Selection::Participant(idx + 1);
             }
         }
@@ -331,32 +219,9 @@ fn global_keybindings(world: &mut World) {
         let event_count = diagram.event_count();
         let participant_count = diagram.participant_count();
 
-        if event_count == 0 && participant_count == 0 {
-            return;
-        }
-
         let selection = world.get::<EditorState>().selection;
-        let new_selection = match selection {
-            Selection::Event(idx) => {
-                if idx + 1 >= event_count {
-                    if participant_count > 0 {
-                        Selection::Participant(0)
-                    } else {
-                        Selection::Event(0)
-                    }
-                } else {
-                    Selection::Event(idx + 1)
-                }
-            }
-            _ => {
-                if event_count > 0 {
-                    Selection::Event(0)
-                } else {
-                    Selection::Participant(0)
-                }
-            }
-        };
-        world.get_mut::<EditorState>().selection = new_selection;
+        world.get_mut::<EditorState>().selection =
+            selection.next_event(event_count, participant_count);
     });
 
     kb.bind(GLOBAL, 'k', "Previous event", |world| {
@@ -369,32 +234,9 @@ fn global_keybindings(world: &mut World) {
         let event_count = diagram.event_count();
         let participant_count = diagram.participant_count();
 
-        if event_count == 0 && participant_count == 0 {
-            return;
-        }
-
         let selection = world.get::<EditorState>().selection;
-        let new_selection = match selection {
-            Selection::Event(idx) => {
-                if idx == 0 {
-                    if participant_count > 0 {
-                        Selection::Participant(participant_count - 1)
-                    } else {
-                        Selection::Event(event_count - 1)
-                    }
-                } else {
-                    Selection::Event(idx - 1)
-                }
-            }
-            _ => {
-                if event_count > 0 {
-                    Selection::Event(event_count - 1)
-                } else {
-                    Selection::Participant(participant_count - 1)
-                }
-            }
-        };
-        world.get_mut::<EditorState>().selection = new_selection;
+        world.get_mut::<EditorState>().selection =
+            selection.prev_event(event_count, participant_count);
     });
 
     kb.bind(GLOBAL, 'l', "Next participant", |world| {
@@ -403,17 +245,13 @@ fn global_keybindings(world: &mut World) {
             return;
         }
 
-        let participant_count = world.get::<SequenceDiagram>().participant_count();
-        if participant_count == 0 {
-            return;
-        }
+        let diagram = world.get::<SequenceDiagram>();
+        let participant_count = diagram.participant_count();
+        let event_count = diagram.event_count();
 
         let selection = world.get::<EditorState>().selection;
-        let new_selection = match selection {
-            Selection::Participant(idx) => Selection::Participant((idx + 1) % participant_count),
-            _ => Selection::Participant(0),
-        };
-        world.get_mut::<EditorState>().selection = new_selection;
+        world.get_mut::<EditorState>().selection =
+            selection.next_participant(participant_count, event_count);
     });
 
     kb.bind(GLOBAL, 'h', "Previous participant", |world| {
@@ -422,23 +260,13 @@ fn global_keybindings(world: &mut World) {
             return;
         }
 
-        let participant_count = world.get::<SequenceDiagram>().participant_count();
-        if participant_count == 0 {
-            return;
-        }
+        let diagram = world.get::<SequenceDiagram>();
+        let participant_count = diagram.participant_count();
+        let event_count = diagram.event_count();
 
         let selection = world.get::<EditorState>().selection;
-        let new_selection = match selection {
-            Selection::Participant(idx) => {
-                if idx == 0 {
-                    Selection::Participant(participant_count - 1)
-                } else {
-                    Selection::Participant(idx - 1)
-                }
-            }
-            _ => Selection::Participant(participant_count - 1),
-        };
-        world.get_mut::<EditorState>().selection = new_selection;
+        world.get_mut::<EditorState>().selection =
+            selection.prev_participant(participant_count, event_count);
     });
 
     kb.bind(GLOBAL, 'c', "Clear diagram", |world| {
@@ -718,8 +546,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
     if diagram.participants.is_empty() {
         render_empty_state(frame, diagram_area, theme);
     } else {
-        let seq_layout = SequenceLayout::compute(diagram, diagram_area.width);
-        render_sequence(frame, diagram_area, &seq_layout, selection, theme);
+        render_sequence(frame, diagram_area, diagram, selection, theme);
     }
 
     let has_selection = selection != Selection::None;

@@ -30,6 +30,52 @@ impl SequenceDiagram {
         self.events.len()
     }
 
+    pub fn remove_event(&mut self, idx: usize) {
+        if idx < self.events.len() {
+            self.events.remove(idx);
+        }
+    }
+
+    pub fn swap_participants(&mut self, a: usize, b: usize) {
+        if a >= self.participants.len() || b >= self.participants.len() {
+            return;
+        }
+        self.participants.swap(a, b);
+        for e in &mut self.events {
+            let Event::Message { from, to, .. } = e;
+            if *from == a {
+                *from = b;
+            } else if *from == b {
+                *from = a;
+            }
+            if *to == a {
+                *to = b;
+            } else if *to == b {
+                *to = a;
+            }
+        }
+    }
+
+    pub fn remove_participant(&mut self, idx: usize) {
+        if idx >= self.participants.len() {
+            return;
+        }
+        self.participants.remove(idx);
+        self.events.retain(|e| {
+            let Event::Message { from, to, .. } = e;
+            *from != idx && *to != idx
+        });
+        for e in &mut self.events {
+            let Event::Message { from, to, .. } = e;
+            if *from > idx {
+                *from -= 1;
+            }
+            if *to > idx {
+                *to -= 1;
+            }
+        }
+    }
+
     pub fn to_mermaid(&self) -> String {
         let mut lines = vec!["sequenceDiagram".to_string()];
 
@@ -53,17 +99,14 @@ impl SequenceDiagram {
         let mut diagram = SequenceDiagram::new();
         let mut lines = input.lines();
 
-        // First line must be the header
-        let first_line = lines.next().map(|l| l.trim()).unwrap_or("");
+        let first_line = lines.next().map_or("", str::trim);
         if first_line != "sequenceDiagram" {
             bail!("First line must be 'sequenceDiagram'");
         }
 
-        // Parse remaining lines
         for line in lines {
             let trimmed = line.trim();
 
-            // Fail on empty lines or comments
             if trimmed.is_empty() {
                 bail!("Empty lines are not supported");
             }
@@ -71,11 +114,11 @@ impl SequenceDiagram {
                 bail!("Comments are not supported");
             }
 
-            // Parse participant declaration
+            // Parse participant
             if let Some(rest) = trimmed.strip_prefix("participant ") {
                 let name = rest.trim().to_string();
                 if name.is_empty() {
-                    bail!("Invalid participant declaration: {}", line);
+                    bail!("Invalid participant declaration: {line}");
                 }
                 if !diagram.participants.contains(&name) {
                     diagram.participants.push(name);
@@ -83,25 +126,23 @@ impl SequenceDiagram {
                 continue;
             }
 
-            // Parse message: A->>B:text
+            // Parse message
             if let Some(arrow_pos) = trimmed.find("->>") {
                 let from_name = trimmed[..arrow_pos].trim();
                 let rest = &trimmed[arrow_pos + 3..];
 
-                // Find the colon for the message
                 let (to_name, message) = if let Some(colon_pos) = rest.find(':') {
                     let to = rest[..colon_pos].trim();
                     let msg = rest[colon_pos + 1..].trim();
                     (to, msg.to_string())
                 } else {
-                    bail!("Invalid message syntax (missing ':'): {}", line);
+                    bail!("Invalid message syntax (missing ':'): {line}");
                 };
 
                 if from_name.is_empty() || to_name.is_empty() {
-                    bail!("Invalid message syntax: {}", line);
+                    bail!("Invalid message syntax: {line}");
                 }
 
-                // Auto-add participants if not declared
                 if !diagram.participants.contains(&from_name.to_string()) {
                     diagram.participants.push(from_name.to_string());
                 }
@@ -129,7 +170,7 @@ impl SequenceDiagram {
                 continue;
             }
 
-            bail!("Unsupported Mermaid feature: {}", trimmed);
+            bail!("Unsupported mermaid feature: {trimmed}");
         }
 
         Ok(diagram)

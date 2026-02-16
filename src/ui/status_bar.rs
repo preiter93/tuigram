@@ -5,7 +5,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use super::state::EditorMode;
+use super::EditorMode;
 use crate::theme::Theme;
 
 pub fn render_status_bar(

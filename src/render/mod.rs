@@ -1,3 +1,3 @@
 mod sequence;
 
-pub use sequence::{SequenceLayout, render_sequence};
+pub use sequence::render_sequence;

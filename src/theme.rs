@@ -1,4 +1,4 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use tui_theme_builder::ThemeBuilder;
 
 #[derive(ThemeBuilder)]
@@ -13,20 +13,8 @@ pub struct Theme {
     #[style(fg = accent, add_modifier = bold)]
     pub accent: Style,
 
-    #[style(fg = accent)]
-    pub accent_dim: Style,
-
-    #[style(fg = highlight, add_modifier = bold)]
-    pub highlight: Style,
-
-    #[style(fg = highlight)]
-    pub highlight_dim: Style,
-
     #[style(fg = success, add_modifier = bold)]
     pub success: Style,
-
-    #[style(fg = warning, add_modifier = bold)]
-    pub warning: Style,
 
     #[style(fg = black, bg = accent, add_modifier = bold)]
     pub status_normal: Style,
@@ -43,14 +31,8 @@ pub struct Theme {
     #[style(fg = accent)]
     pub border: Style,
 
-    #[style(fg = muted)]
-    pub border_dim: Style,
-
     #[style(fg = highlight)]
     pub selected: Style,
-
-    #[style(fg = highlight, add_modifier = bold)]
-    pub selected_bold: Style,
 
     #[style(fg = highlight)]
     pub key: Style,
@@ -71,7 +53,6 @@ pub struct Colors {
     pub warning: Color,
     pub help: Color,
     pub black: Color,
-    pub bold: Modifier,
 }
 
 impl Default for Colors {
@@ -85,7 +66,6 @@ impl Default for Colors {
             warning: Color::Yellow,
             help: Color::Magenta,
             black: Color::Black,
-            bold: Modifier::BOLD,
         }
     }
 }
