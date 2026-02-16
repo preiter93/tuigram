@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-02-16
+
+### 🚀 Features
+
+- *(mermaid)* Add mermaid import
+- *(loopback)* Add self-message support with loop-back
+
+### 🐛 Bug Fixes
+
+- *(lint)* Satisfy clippy
+
+### 📚 Documentation
+
+- *(README)* Organize sections
+- *(README)* Add installation section
+
+### 🔧 Refactor
+
+- *(models)* Simplify sequence diagram and selection
+
+### ⚙️ Miscellaneous Tasks
+
+- *(gitignore)* Add exported diagram
+- *(release)* Extract crates.io publish to separate job
+
+### Build
+
+- *(cd)* Release with binaries
+
 ## [0.1.0] - 2026-02-16
 
 ### 🚀 Features
