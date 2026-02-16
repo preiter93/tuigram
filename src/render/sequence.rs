@@ -138,10 +138,7 @@ fn render_lifelines(f: &mut Frame, area: Rect, layout: &SequenceLayout, theme: &
                 width: 1,
                 height: 1,
             };
-            f.render_widget(
-                Paragraph::new(Line::from("│")).style(theme.muted),
-                line_area,
-            );
+            f.render_widget(Paragraph::new(Line::from("│")).style(theme.text), line_area);
         }
     }
 }
@@ -216,7 +213,9 @@ pub fn render_sequence(
     selection: Selection,
     theme: &Theme,
 ) {
-    let diagram_block = Block::default().borders(Borders::ALL);
+    let diagram_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border);
     f.render_widget(diagram_block, outer_area);
 
     let area = outer_area.inner(Margin::new(0, 1));

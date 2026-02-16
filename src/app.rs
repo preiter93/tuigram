@@ -88,14 +88,28 @@ fn global_keybindings(world: &mut World) {
                         }
                     });
                 }
-                world.get_mut::<EditorState>().clear_selection();
+                let new_count = world.get::<SequenceDiagram>().participant_count();
+                let editor = world.get_mut::<EditorState>();
+                if new_count == 0 {
+                    editor.clear_selection();
+                } else {
+                    let new_idx = idx.min(new_count - 1);
+                    editor.selection = Selection::Participant(new_idx);
+                }
             }
             Selection::Event(idx) => {
                 let diagram = world.get_mut::<SequenceDiagram>();
                 if idx < diagram.events.len() {
                     diagram.events.remove(idx);
                 }
-                world.get_mut::<EditorState>().clear_selection();
+                let new_count = world.get::<SequenceDiagram>().event_count();
+                let editor = world.get_mut::<EditorState>();
+                if new_count == 0 {
+                    editor.clear_selection();
+                } else {
+                    let new_idx = idx.min(new_count - 1);
+                    editor.selection = Selection::Event(new_idx);
+                }
             }
             Selection::None => {
                 world.get_mut::<SequenceDiagram>().events.pop();
@@ -267,6 +281,126 @@ fn global_keybindings(world: &mut World) {
                 world.get_mut::<EditorState>().selection = Selection::Participant(idx + 1);
             }
         }
+    });
+
+    kb.bind(GLOBAL, 'j', "Next event", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let diagram = world.get::<SequenceDiagram>();
+        let event_count = diagram.event_count();
+        let participant_count = diagram.participant_count();
+
+        if event_count == 0 && participant_count == 0 {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        let new_selection = match selection {
+            Selection::Event(idx) => {
+                if idx + 1 >= event_count {
+                    if participant_count > 0 {
+                        Selection::Participant(0)
+                    } else {
+                        Selection::Event(0)
+                    }
+                } else {
+                    Selection::Event(idx + 1)
+                }
+            }
+            _ => {
+                if event_count > 0 {
+                    Selection::Event(0)
+                } else {
+                    Selection::Participant(0)
+                }
+            }
+        };
+        world.get_mut::<EditorState>().selection = new_selection;
+    });
+
+    kb.bind(GLOBAL, 'k', "Previous event", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let diagram = world.get::<SequenceDiagram>();
+        let event_count = diagram.event_count();
+        let participant_count = diagram.participant_count();
+
+        if event_count == 0 && participant_count == 0 {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        let new_selection = match selection {
+            Selection::Event(idx) => {
+                if idx == 0 {
+                    if participant_count > 0 {
+                        Selection::Participant(participant_count - 1)
+                    } else {
+                        Selection::Event(event_count - 1)
+                    }
+                } else {
+                    Selection::Event(idx - 1)
+                }
+            }
+            _ => {
+                if event_count > 0 {
+                    Selection::Event(event_count - 1)
+                } else {
+                    Selection::Participant(participant_count - 1)
+                }
+            }
+        };
+        world.get_mut::<EditorState>().selection = new_selection;
+    });
+
+    kb.bind(GLOBAL, 'l', "Next participant", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let participant_count = world.get::<SequenceDiagram>().participant_count();
+        if participant_count == 0 {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        let new_selection = match selection {
+            Selection::Participant(idx) => Selection::Participant((idx + 1) % participant_count),
+            _ => Selection::Participant(0),
+        };
+        world.get_mut::<EditorState>().selection = new_selection;
+    });
+
+    kb.bind(GLOBAL, 'h', "Previous participant", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let participant_count = world.get::<SequenceDiagram>().participant_count();
+        if participant_count == 0 {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        let new_selection = match selection {
+            Selection::Participant(idx) => {
+                if idx == 0 {
+                    Selection::Participant(participant_count - 1)
+                } else {
+                    Selection::Participant(idx - 1)
+                }
+            }
+            _ => Selection::Participant(participant_count - 1),
+        };
+        world.get_mut::<EditorState>().selection = new_selection;
     });
 
     kb.bind(GLOBAL, 'c', "Clear diagram", |world| {
