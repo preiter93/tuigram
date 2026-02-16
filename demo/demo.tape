@@ -59,6 +59,8 @@ Type "e"
 Sleep 600ms
 Enter
 Sleep 400ms
+Down
+Sleep 300ms
 Enter
 Sleep 400ms
 Type "Request"
@@ -73,11 +75,25 @@ Down
 Sleep 300ms
 Enter
 Sleep 400ms
-Down Down
+Down
 Sleep 300ms
 Enter
 Sleep 400ms
 Type "Validate Token"
+Sleep 300ms
+Enter
+Sleep 800ms
+
+# Auth(2) -> Auth(2): Check Permissions (self-message)
+Type "e"
+Sleep 600ms
+Down Down
+Sleep 300ms
+Enter
+Sleep 400ms
+Enter
+Sleep 400ms
+Type "Check Permissions"
 Sleep 300ms
 Enter
 Sleep 800ms
@@ -89,7 +105,7 @@ Down Down
 Sleep 300ms
 Enter
 Sleep 400ms
-Down
+Up
 Sleep 300ms
 Enter
 Sleep 400ms
@@ -105,7 +121,7 @@ Down
 Sleep 300ms
 Enter
 Sleep 400ms
-Down Down Down
+Down Down
 Sleep 300ms
 Enter
 Sleep 400ms
@@ -121,7 +137,7 @@ Down Down Down
 Sleep 300ms
 Enter
 Sleep 400ms
-Down
+Up Up
 Sleep 300ms
 Enter
 Sleep 400ms
@@ -137,6 +153,8 @@ Down
 Sleep 300ms
 Enter
 Sleep 400ms
+Up
+Sleep 300ms
 Enter
 Sleep 400ms
 Type "Response"
@@ -194,3 +212,11 @@ Sleep 600ms
 
 Type "cat diagram.mmd" Enter
 Sleep 3s
+
+# Reload with --import
+Type "tuigram --import diagram.mmd" Enter
+Sleep 2s
+
+# Quit
+Ctrl+c
+Sleep 500ms

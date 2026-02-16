@@ -15,6 +15,7 @@ use crate::{
 
 const HEADER_HEIGHT: u16 = 3;
 const MESSAGE_SPACING: u16 = 3;
+const FIRST_MESSAGE_OFFSET: u16 = 2;
 
 pub fn render_sequence(
     f: &mut Frame,
@@ -96,7 +97,7 @@ pub fn render_sequence(
         let Event::Message { from, to, text } = event;
         let from_x = positions[*from];
         let to_x = positions[*to];
-        let y = lifeline_start + HEADER_HEIGHT + (i as u16 * MESSAGE_SPACING);
+        let y = lifeline_start + FIRST_MESSAGE_OFFSET + (i as u16 * MESSAGE_SPACING);
 
         let is_selected = selection == Selection::Event(i);
         let style = if is_selected {
@@ -105,41 +106,88 @@ pub fn render_sequence(
             theme.text
         };
 
-        let start = from_x.min(to_x);
-        let end = from_x.max(to_x);
-        let len = end - start;
+        // Render as loop-back
+        if from == to {
+            let loop_width: u16 = 4;
+            let x = from_x;
 
-        let mut arrow = "─".repeat(len as usize);
-        if from_x < to_x {
-            arrow.push('>');
+            f.render_widget(
+                Paragraph::new("───┐").style(style),
+                Rect {
+                    x,
+                    y: y.saturating_sub(1),
+                    width: loop_width,
+                    height: 1,
+                },
+            );
+
+            f.render_widget(
+                Paragraph::new("   │").style(style),
+                Rect {
+                    x,
+                    y,
+                    width: loop_width,
+                    height: 1,
+                },
+            );
+
+            f.render_widget(
+                Paragraph::new("◄──┘").style(style),
+                Rect {
+                    x,
+                    y: y + 1,
+                    width: loop_width,
+                    height: 1,
+                },
+            );
+
+            let text_width = text.len() as u16;
+            f.render_widget(
+                Paragraph::new(text.as_str()).style(style),
+                Rect {
+                    x: x + loop_width,
+                    y,
+                    width: text_width,
+                    height: 1,
+                },
+            );
         } else {
-            arrow.insert(0, '<');
+            let start = from_x.min(to_x);
+            let end = from_x.max(to_x);
+            let len = end - start;
+
+            let mut arrow = "─".repeat(len as usize);
+            if from_x < to_x {
+                arrow.push('>');
+            } else {
+                arrow.insert(0, '<');
+            }
+
+            f.render_widget(
+                Paragraph::new(Line::from(arrow)).style(style),
+                Rect {
+                    x: start,
+                    y,
+                    width: len + 1,
+                    height: 1,
+                },
+            );
+
+            let text_width = text.len() as u16;
+            let text_x = start + len.div_ceil(2);
+            let text_start = text_x.saturating_sub(text_width / 2);
+
+            f.render_widget(
+                Paragraph::new(text.as_str())
+                    .alignment(Alignment::Center)
+                    .style(style),
+                Rect {
+                    x: text_start,
+                    y: y.saturating_sub(1),
+                    width: text_width,
+                    height: 1,
+                },
+            );
         }
-
-        f.render_widget(
-            Paragraph::new(Line::from(arrow)).style(style),
-            Rect {
-                x: start,
-                y,
-                width: len + 1,
-                height: 1,
-            },
-        );
-
-        let text_width = text.len() as u16;
-        let text_x = start + len.div_ceil(2);
-        let text_start = text_x.saturating_sub(text_width / 2);
-
-        f.render_widget(
-            Paragraph::new(text.as_str())
-                .alignment(Alignment::Center)
-                .style(style),
-            Rect {
-                x: text_start,
-                y: y.saturating_sub(1),
-                width: text_width,
-                height: 1,
-            },
-        );
     }
 }

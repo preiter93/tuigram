@@ -335,17 +335,14 @@ fn input_mode_keybindings(world: &mut World) {
                     let editor = world.get_mut::<EditorState>();
                     editor.message_from = Some(selected);
                     editor.mode = EditorMode::SelectTo;
-                    editor.selected_index = usize::from(selected == 0);
+                    editor.selected_index = selected;
                 }
                 EditorMode::SelectTo => {
                     let selected = world.get::<EditorState>().selected_index;
-                    let from_idx = world.get::<EditorState>().message_from;
-                    if Some(selected) != from_idx {
-                        let editor = world.get_mut::<EditorState>();
-                        editor.message_to = Some(selected);
-                        editor.mode = EditorMode::InputMessage;
-                        editor.input_buffer.clear();
-                    }
+                    let editor = world.get_mut::<EditorState>();
+                    editor.message_to = Some(selected);
+                    editor.mode = EditorMode::InputMessage;
+                    editor.input_buffer.clear();
                 }
                 EditorMode::InputMessage => {
                     let editor_state = world.get::<EditorState>().clone();
@@ -571,25 +568,14 @@ pub fn render(frame: &mut Frame, world: &mut World) {
                 theme,
             );
         }
-        EditorMode::SelectFrom => {
-            render_participant_selector(
+        EditorMode::SelectFrom | EditorMode::SelectTo => {
+            render_dual_participant_selector(
                 frame,
                 area,
-                "Select From",
                 &diagram.participants,
-                editor.selected_index,
-                None,
-                theme,
-            );
-        }
-        EditorMode::SelectTo => {
-            render_participant_selector(
-                frame,
-                area,
-                "Select To",
-                &diagram.participants,
-                editor.selected_index,
                 editor.message_from,
+                editor.selected_index,
+                editor.mode == EditorMode::SelectFrom,
                 theme,
             );
         }
@@ -675,61 +661,87 @@ fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-fn render_participant_selector(
+#[allow(clippy::too_many_arguments)]
+fn render_dual_participant_selector(
     frame: &mut Frame,
     area: Rect,
-    title: &str,
     participants: &[String],
-    selected: usize,
-    disabled: Option<usize>,
+    from_idx: Option<usize>,
+    cursor: usize,
+    selecting_from: bool,
     theme: &Theme,
 ) {
-    let popup_width = 40.min(area.width.saturating_sub(4));
+    let popup_width = 50.min(area.width.saturating_sub(4));
     let popup_height = (participants.len() as u16 + 4).min(area.height.saturating_sub(4));
 
     let popup_area = centered_rect(popup_width, popup_height, area);
 
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
+    let title = if selecting_from { " From " } else { " To " };
     let block = Block::default()
-        .title(format!(" {title} "))
+        .title(title)
         .borders(Borders::ALL)
         .border_style(theme.border);
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let lines: Vec<String> = participants
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            let prefix = if i == selected { "▶ " } else { "  " };
-            let suffix = if disabled == Some(i) { " (from)" } else { "" };
-            format!("{prefix}{name}{suffix}")
-        })
-        .collect();
+    let col_width = inner.width / 2;
 
-    for (i, line) in lines.iter().enumerate() {
+    for (i, name) in participants.iter().enumerate() {
         if i as u16 >= inner.height {
             break;
         }
 
-        let style = if disabled == Some(i) {
-            theme.muted
-        } else if i == selected {
-            theme.selected
+        let y = inner.y + i as u16;
+
+        let from_selected = from_idx == Some(i);
+        let from_cursor = selecting_from && cursor == i;
+        let from_prefix = if from_cursor || from_selected {
+            "▶ "
         } else {
-            theme.text
+            "  "
         };
-
-        let line_area = Rect {
-            x: inner.x,
-            y: inner.y + i as u16,
-            width: inner.width,
-            height: 1,
+        let from_style = if selecting_from {
+            if from_cursor || from_selected {
+                theme.selected
+            } else {
+                theme.text
+            }
+        } else {
+            theme.muted
         };
+        frame.render_widget(
+            Paragraph::new(format!("{from_prefix}{name}")).style(from_style),
+            Rect {
+                x: inner.x,
+                y,
+                width: col_width,
+                height: 1,
+            },
+        );
 
-        frame.render_widget(Paragraph::new(line.as_str()).style(style), line_area);
+        let to_cursor = !selecting_from && cursor == i;
+        let to_prefix = if to_cursor { "▶ " } else { "  " };
+        let to_style = if !selecting_from {
+            if to_cursor {
+                theme.selected
+            } else {
+                theme.text
+            }
+        } else {
+            theme.muted
+        };
+        frame.render_widget(
+            Paragraph::new(format!("{to_prefix}{name}")).style(to_style),
+            Rect {
+                x: inner.x + col_width,
+                y,
+                width: col_width,
+                height: 1,
+            },
+        );
     }
 }
 
