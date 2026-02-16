@@ -283,6 +283,37 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
+    kb.bind(GLOBAL, 'J', "Move event down", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        if let Selection::Event(idx) = selection {
+            let event_count = world.get::<SequenceDiagram>().event_count();
+            if idx + 1 < event_count {
+                world.get_mut::<SequenceDiagram>().events.swap(idx, idx + 1);
+                world.get_mut::<EditorState>().selection = Selection::Event(idx + 1);
+            }
+        }
+    });
+
+    kb.bind(GLOBAL, 'K', "Move event up", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        if let Selection::Event(idx) = selection {
+            if idx > 0 {
+                world.get_mut::<SequenceDiagram>().events.swap(idx, idx - 1);
+                world.get_mut::<EditorState>().selection = Selection::Event(idx - 1);
+            }
+        }
+    });
+
     kb.bind(GLOBAL, 'j', "Next event", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode != EditorMode::Normal {
