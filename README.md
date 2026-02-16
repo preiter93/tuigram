@@ -18,12 +18,6 @@ brew install preiter93/tuigram/tuigram
 nix run github:preiter93/tuigram
 ```
 
-Or install it to your profile:
-
-```
-nix profile install github:preiter93/tuigram
-```
-
 ### From crates.io
 
 ```
