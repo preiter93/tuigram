@@ -4,11 +4,17 @@ A TUI sequence diagram editor.
 
 ![Demo](demo/demo.gif)
 
-## Usage
+## Installation
+
+### From crates.io
 
 ```
-cargo run --release
+cargo install tuigram
 ```
+
+### Pre-built binaries
+
+Download the latest release from [GitHub Releases](https://github.com/preiter93/tuigram/releases).
 
 ## Keybindings
 
