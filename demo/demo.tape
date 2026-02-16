@@ -25,135 +25,132 @@ Show
 
 Sleep 1.5s
 
-# Add first participant
+# Add participants
 Type "p"
-Sleep 800ms
-Type "User"
+Sleep 600ms
+Type "Client"
 Sleep 300ms
 Enter
-Sleep 800ms
+Sleep 600ms
 
-# Add second participant
 Type "p"
-Sleep 800ms
-Type "API"
+Sleep 600ms
+Type "Gateway"
 Sleep 300ms
 Enter
-Sleep 800ms
+Sleep 600ms
 
-# Add third participant
 Type "p"
-Sleep 800ms
-Type "Database"
+Sleep 600ms
+Type "Auth"
+Sleep 300ms
+Enter
+Sleep 600ms
+
+Type "p"
+Sleep 600ms
+Type "Orders"
 Sleep 300ms
 Enter
 Sleep 1s
 
-# Add first event
+# Client -> Gateway: Request
 Type "e"
-Sleep 800ms
+Sleep 600ms
 Enter
-Sleep 500ms
+Sleep 400ms
 Down
 Sleep 300ms
 Enter
-Sleep 500ms
-Type "Login Request"
+Sleep 400ms
+Type "Request"
 Sleep 300ms
 Enter
-Sleep 1s
+Sleep 800ms
 
-# Add second event
+# Gateway -> Auth: Validate Token
 Type "e"
-Sleep 800ms
+Sleep 600ms
 Down
 Sleep 300ms
 Enter
-Sleep 500ms
+Sleep 400ms
+Down
+Sleep 300ms
+Enter
+Sleep 400ms
+Type "Validate Token"
+Sleep 300ms
+Enter
+Sleep 800ms
+
+# Auth -> Gateway: Token Valid
+Type "e"
+Sleep 600ms
 Down Down
 Sleep 300ms
 Enter
-Sleep 500ms
-Type "Query User"
+Sleep 400ms
+Down
 Sleep 300ms
 Enter
-Sleep 1s
-
-# Add third event
-Type "e"
+Sleep 400ms
+Type "Token Valid"
+Sleep 300ms
+Enter
 Sleep 800ms
+
+# Gateway -> Orders: Get Orders
+Type "e"
+Sleep 600ms
+Down
+Sleep 300ms
+Enter
+Sleep 400ms
 Down Down
 Sleep 300ms
 Enter
-Sleep 500ms
-Down
+Sleep 400ms
+Type "Get Orders"
 Sleep 300ms
 Enter
-Sleep 500ms
-Type "User Data"
-Sleep 300ms
-Enter
-Sleep 1s
-
-# Add fourth event
-Type "e"
 Sleep 800ms
+
+# Orders -> Gateway: Order List
+Type "e"
+Sleep 600ms
+Down Down Down
+Sleep 300ms
+Enter
+Sleep 400ms
 Down
 Sleep 300ms
 Enter
-Sleep 500ms
+Sleep 400ms
+Type "Order List"
+Sleep 300ms
 Enter
-Sleep 500ms
-Type "Login Success"
+Sleep 800ms
+
+# Gateway -> Client: Response
+Type "e"
+Sleep 600ms
+Down
+Sleep 300ms
+Enter
+Sleep 400ms
+Enter
+Sleep 400ms
+Type "Response"
 Sleep 300ms
 Enter
 Sleep 1.5s
 
-# Navigate through events
+# Navigate and demonstrate selection
 Type "j"
-Sleep 500ms
+Sleep 400ms
 Type "j"
-Sleep 500ms
+Sleep 400ms
 Type "j"
-Sleep 500ms
-Type "k"
-Sleep 500ms
-
-# Navigate through participants
-Type "l"
-Sleep 500ms
-Type "l"
-Sleep 500ms
-Type "h"
-Sleep 500ms
-
-# Move a participant
-Type "L"
-Sleep 600ms
-Type "H"
-Sleep 600ms
-
-# Select an event and move it
-Type "j"
-Sleep 500ms
-Type "J"
-Sleep 600ms
-Type "K"
-Sleep 600ms
-
-# Show help
-Type "?"
-Sleep 2s
-Type "?"
-Sleep 800ms
-
-# Export to Mermaid
-Type "m"
-Sleep 1.5s
-
-# Quit
-Ctrl+c
-Sleep 800ms
-
-Type "cat diagram.mmd" Enter
-Sleep 3s
+Sleep 400ms
+Type "l
