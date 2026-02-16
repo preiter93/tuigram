@@ -29,3 +29,9 @@ cargo run --release
 ## Export
 
 Press `m` to export the diagram to `diagram.mmd` in Mermaid format.
+
+## Roadmap
+
+- Scrolling
+- Persistence
+- Undo/redo
