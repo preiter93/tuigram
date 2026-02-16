@@ -6,6 +6,12 @@ A TUI sequence diagram editor.
 
 ## Installation
 
+### Homebrew
+
+```
+brew install preiter93/tuigram/tuigram
+```
+
 ### From crates.io
 
 ```
