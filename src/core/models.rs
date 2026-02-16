@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 pub struct Participant(pub String);
 
 #[derive(Clone)]
@@ -34,6 +36,12 @@ pub enum Selection {
     Event(usize),
 }
 
+#[derive(Clone)]
+pub struct StatusMessage {
+    pub text: String,
+    pub created_at: Instant,
+}
+
 #[derive(Default, Clone)]
 pub struct EditorState {
     pub mode: EditorMode,
@@ -41,7 +49,7 @@ pub struct EditorState {
     pub selected_index: usize,
     pub message_from: Option<usize>,
     pub message_to: Option<usize>,
-    pub status_message: Option<String>,
+    pub status_message: Option<StatusMessage>,
     pub selection: Selection,
 }
 
@@ -60,11 +68,24 @@ impl EditorState {
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status_message = Some(msg.into());
+        self.status_message = Some(StatusMessage {
+            text: msg.into(),
+            created_at: Instant::now(),
+        });
     }
 
     pub fn clear_status(&mut self) {
         self.status_message = None;
+    }
+
+    pub fn get_status(&self) -> Option<&str> {
+        self.status_message.as_ref().and_then(|s| {
+            if s.created_at.elapsed().as_millis() < 800 {
+                Some(s.text.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn clear_selection(&mut self) {

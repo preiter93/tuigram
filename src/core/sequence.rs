@@ -28,4 +28,23 @@ impl SequenceDiagram {
     pub fn event_count(&self) -> usize {
         self.events.len()
     }
+
+    pub fn to_mermaid(&self) -> String {
+        let mut lines = vec!["sequenceDiagram".to_string()];
+
+        for name in &self.participants {
+            lines.push(format!("    participant {}", name));
+        }
+
+        for event in &self.events {
+            let Event::Message { from, to, text } = event;
+            if let (Some(from_name), Some(to_name)) =
+                (self.participants.get(*from), self.participants.get(*to))
+            {
+                lines.push(format!("    {}->>{}:{}", from_name, to_name, text));
+            }
+        }
+
+        lines.join("\n")
+    }
 }

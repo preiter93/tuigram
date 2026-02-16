@@ -11,6 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use std::fs;
 use tui_world::{KeyBinding, Keybindings, WidgetId, World};
 
 pub const GLOBAL: WidgetId = WidgetId("Global");
@@ -277,6 +278,22 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
+    kb.bind(GLOBAL, 'm', "Export Mermaid", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::Normal {
+            let diagram = world.get::<SequenceDiagram>();
+            let mermaid = diagram.to_mermaid();
+            match fs::write("diagram.mmd", &mermaid) {
+                Ok(_) => world
+                    .get_mut::<EditorState>()
+                    .set_status("Exported to diagram.mmd"),
+                Err(e) => world
+                    .get_mut::<EditorState>()
+                    .set_status(format!("Export failed: {}", e)),
+            }
+        }
+    });
+
     kb.bind(GLOBAL, '?', "Help", |world| {
         let editor = world.get_mut::<EditorState>();
         if editor.mode == EditorMode::Help {
@@ -536,7 +553,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         frame,
         status_area,
         &editor.mode,
-        editor.status_message.as_deref(),
+        editor.get_status(),
         diagram.participant_count(),
         has_selection,
         &theme,

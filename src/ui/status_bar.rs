@@ -11,7 +11,7 @@ pub fn render_status_bar(
     frame: &mut Frame,
     area: Rect,
     mode: &EditorMode,
-    _status_message: Option<&str>,
+    status_message: Option<&str>,
     participant_count: usize,
     has_selection: bool,
     theme: &Theme,
@@ -44,11 +44,18 @@ pub fn render_status_bar(
         EditorMode::Help => "?: close",
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(format!(" {} ", mode_text), mode_style),
         Span::raw(" "),
-        Span::styled(hints, theme.muted),
-    ]);
+    ];
 
+    if let Some(msg) = status_message {
+        spans.push(Span::styled(msg, theme.success));
+        spans.push(Span::raw("  "));
+    }
+
+    spans.push(Span::styled(hints, theme.muted));
+
+    let line = Line::from(spans);
     frame.render_widget(Paragraph::new(line), area);
 }
