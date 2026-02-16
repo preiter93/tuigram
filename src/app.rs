@@ -724,14 +724,12 @@ fn render_dual_participant_selector(
 
         let to_cursor = !selecting_from && cursor == i;
         let to_prefix = if to_cursor { "▶ " } else { "  " };
-        let to_style = if !selecting_from {
-            if to_cursor {
-                theme.selected
-            } else {
-                theme.text
-            }
-        } else {
+        let to_style = if selecting_from {
             theme.muted
+        } else if to_cursor {
+            theme.selected
+        } else {
+            theme.text
         };
         frame.render_widget(
             Paragraph::new(format!("{to_prefix}{name}")).style(to_style),
