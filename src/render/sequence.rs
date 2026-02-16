@@ -57,7 +57,7 @@ impl SequenceLayout {
 
         let messages = {
             let mut messages = Vec::new();
-            let message_spacing = 4;
+            let message_spacing = 3;
 
             for (i, event) in diagram.events.iter().enumerate() {
                 let Event::Message { from, to, text } = event;
