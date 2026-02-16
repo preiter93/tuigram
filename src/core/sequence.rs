@@ -33,7 +33,7 @@ impl SequenceDiagram {
         let mut lines = vec!["sequenceDiagram".to_string()];
 
         for name in &self.participants {
-            lines.push(format!("    participant {}", name));
+            lines.push(format!("    participant {name}"));
         }
 
         for event in &self.events {
@@ -41,7 +41,7 @@ impl SequenceDiagram {
             if let (Some(from_name), Some(to_name)) =
                 (self.participants.get(*from), self.participants.get(*to))
             {
-                lines.push(format!("    {}->>{}:{}", from_name, to_name, text));
+                lines.push(format!("    {from_name}->>{to_name}:{text}"));
             }
         }
 

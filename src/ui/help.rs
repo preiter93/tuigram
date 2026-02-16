@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_truncation)]
+
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Flex, Layout, Rect},

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use crate::{
     core::{EditorMode, EditorState, Event, Selection, SequenceDiagram},
     render::{SequenceLayout, render_sequence},
@@ -231,25 +233,25 @@ fn global_keybindings(world: &mut World) {
         }
 
         let selection = world.get::<EditorState>().selection;
-        if let Selection::Participant(idx) = selection {
-            if idx > 0 {
-                let diagram = world.get_mut::<SequenceDiagram>();
-                diagram.participants.swap(idx, idx - 1);
-                diagram.events.iter_mut().for_each(|e| {
-                    let Event::Message { from, to, .. } = e;
-                    if *from == idx {
-                        *from = idx - 1;
-                    } else if *from == idx - 1 {
-                        *from = idx;
-                    }
-                    if *to == idx {
-                        *to = idx - 1;
-                    } else if *to == idx - 1 {
-                        *to = idx;
-                    }
-                });
-                world.get_mut::<EditorState>().selection = Selection::Participant(idx - 1);
-            }
+        if let Selection::Participant(idx) = selection
+            && idx > 0
+        {
+            let diagram = world.get_mut::<SequenceDiagram>();
+            diagram.participants.swap(idx, idx - 1);
+            diagram.events.iter_mut().for_each(|e| {
+                let Event::Message { from, to, .. } = e;
+                if *from == idx {
+                    *from = idx - 1;
+                } else if *from == idx - 1 {
+                    *from = idx;
+                }
+                if *to == idx {
+                    *to = idx - 1;
+                } else if *to == idx - 1 {
+                    *to = idx;
+                }
+            });
+            world.get_mut::<EditorState>().selection = Selection::Participant(idx - 1);
         }
     });
 
@@ -306,11 +308,11 @@ fn global_keybindings(world: &mut World) {
         }
 
         let selection = world.get::<EditorState>().selection;
-        if let Selection::Event(idx) = selection {
-            if idx > 0 {
-                world.get_mut::<SequenceDiagram>().events.swap(idx, idx - 1);
-                world.get_mut::<EditorState>().selection = Selection::Event(idx - 1);
-            }
+        if let Selection::Event(idx) = selection
+            && idx > 0
+        {
+            world.get_mut::<SequenceDiagram>().events.swap(idx, idx - 1);
+            world.get_mut::<EditorState>().selection = Selection::Event(idx - 1);
         }
     });
 
@@ -449,12 +451,12 @@ fn global_keybindings(world: &mut World) {
             let diagram = world.get::<SequenceDiagram>();
             let mermaid = diagram.to_mermaid();
             match fs::write("diagram.mmd", &mermaid) {
-                Ok(_) => world
+                Ok(()) => world
                     .get_mut::<EditorState>()
                     .set_status("Exported to diagram.mmd"),
                 Err(e) => world
                     .get_mut::<EditorState>()
-                    .set_status(format!("Export failed: {}", e)),
+                    .set_status(format!("Export failed: {e}")),
             }
         }
     });
@@ -470,10 +472,10 @@ fn global_keybindings(world: &mut World) {
 
     kb.bind(GLOBAL, KeyBinding::key(KeyCode::Esc), "Cancel", |world| {
         let editor = world.get_mut::<EditorState>();
-        if editor.mode != EditorMode::Normal {
-            editor.reset();
-        } else {
+        if editor.mode == EditorMode::Normal {
             editor.clear_selection();
+        } else {
+            editor.reset();
         }
     });
 }
@@ -500,7 +502,7 @@ fn input_mode_keybindings(world: &mut World) {
                     let editor = world.get_mut::<EditorState>();
                     editor.message_from = Some(selected);
                     editor.mode = EditorMode::SelectTo;
-                    editor.selected_index = if selected == 0 { 1 } else { 0 };
+                    editor.selected_index = usize::from(selected == 0);
                 }
                 EditorMode::SelectTo => {
                     let selected = world.get::<EditorState>().selected_index;
@@ -515,14 +517,13 @@ fn input_mode_keybindings(world: &mut World) {
                 EditorMode::InputMessage => {
                     let editor_state = world.get::<EditorState>().clone();
                     let text = editor_state.input_buffer.trim().to_string();
-                    if !text.is_empty() {
-                        if let (Some(from), Some(to)) =
+                    if !text.is_empty()
+                        && let (Some(from), Some(to)) =
                             (editor_state.message_from, editor_state.message_to)
-                        {
-                            world
-                                .get_mut::<SequenceDiagram>()
-                                .add_message(from, to, text);
-                        }
+                    {
+                        world
+                            .get_mut::<SequenceDiagram>()
+                            .add_message(from, to, text);
                     }
                     world.get_mut::<EditorState>().reset();
                 }
@@ -658,14 +659,18 @@ fn input_mode_keybindings(world: &mut World) {
         if matches!(
             mode,
             EditorMode::InputParticipant | EditorMode::InputMessage
-        ) {
-            if let KeyCode::Char(c) = key.code {
-                world.get_mut::<EditorState>().input_buffer.push(c);
-            }
+        ) && let KeyCode::Char(c) = key.code
+        {
+            world.get_mut::<EditorState>().input_buffer.push(c);
         }
     });
 }
 
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn handle_selection_nav(world: &mut World, delta: i32) {
     let mode = world.get::<EditorState>().mode.clone();
     if !matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
@@ -706,10 +711,10 @@ pub fn render(frame: &mut Frame, world: &mut World) {
     let selection = editor.selection;
 
     if diagram.participants.is_empty() {
-        render_empty_state(frame, diagram_area, &theme);
+        render_empty_state(frame, diagram_area, theme);
     } else {
-        let seq_layout = SequenceLayout::compute(&diagram, diagram_area.width);
-        render_sequence(frame, diagram_area, &seq_layout, selection, &theme);
+        let seq_layout = SequenceLayout::compute(diagram, diagram_area.width);
+        render_sequence(frame, diagram_area, &seq_layout, selection, theme);
     }
 
     let has_selection = selection != Selection::None;
@@ -721,7 +726,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         editor.get_status(),
         diagram.participant_count(),
         has_selection,
-        &theme,
+        theme,
     );
 
     match &editor.mode {
@@ -731,7 +736,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
                 "Add Participant",
                 &editor.input_buffer,
                 "Name:",
-                &theme,
+                theme,
             );
         }
         EditorMode::SelectFrom => {
@@ -742,7 +747,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
                 &diagram.participants,
                 editor.selected_index,
                 None,
-                &theme,
+                theme,
             );
         }
         EditorMode::SelectTo => {
@@ -753,31 +758,30 @@ pub fn render(frame: &mut Frame, world: &mut World) {
                 &diagram.participants,
                 editor.selected_index,
                 editor.message_from,
-                &theme,
+                theme,
             );
         }
         EditorMode::InputMessage => {
             let from_name = editor
                 .message_from
                 .and_then(|i| diagram.participants.get(i))
-                .map(|s| s.as_str())
-                .unwrap_or("?");
+                .map_or("?", String::as_str);
             let to_name = editor
                 .message_to
                 .and_then(|i| diagram.participants.get(i))
-                .map(|s| s.as_str())
-                .unwrap_or("?");
-            let prompt = format!("{} → {}:", from_name, to_name);
-            render_input_popup(frame, "Message", &editor.input_buffer, &prompt, &theme);
+                .map_or("?", String::as_str);
+            let prompt = format!("{from_name} → {to_name}:");
+            render_input_popup(frame, "Message", &editor.input_buffer, &prompt, theme);
         }
         EditorMode::Help => {
             let active = vec![GLOBAL];
-            render_help(frame, area, &theme, &keybindings, &active);
+            render_help(frame, area, theme, keybindings, &active);
         }
         EditorMode::Normal => {}
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -838,6 +842,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
     );
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn render_participant_selector(
     frame: &mut Frame,
     area: Rect,
@@ -855,7 +860,7 @@ fn render_participant_selector(
     frame.render_widget(ratatui::widgets::Clear, popup_area);
 
     let block = Block::default()
-        .title(format!(" {} ", title))
+        .title(format!(" {title} "))
         .borders(Borders::ALL)
         .border_style(theme.border);
 
@@ -868,7 +873,7 @@ fn render_participant_selector(
         .map(|(i, name)| {
             let prefix = if i == selected { "▶ " } else { "  " };
             let suffix = if disabled == Some(i) { " (from)" } else { "" };
-            format!("{}{}{}", prefix, name, suffix)
+            format!("{prefix}{name}{suffix}")
         })
         .collect();
 

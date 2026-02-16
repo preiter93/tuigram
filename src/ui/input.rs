@@ -24,7 +24,7 @@ pub fn render_input_popup(
     frame.render_widget(Clear, popup_area);
 
     let block = Block::default()
-        .title(format!(" {} ", title))
+        .title(format!(" {title} "))
         .borders(Borders::ALL)
         .border_style(theme.border);
 

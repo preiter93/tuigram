@@ -28,9 +28,8 @@ fn run() -> anyhow::Result<()> {
         if event::poll(std::time::Duration::from_millis(16))? {
             let active = app::active_widgets(&world);
 
-            match event::read()? {
-                CEvent::Key(key) => Event::Key(key).handle(&mut world, &active),
-                _ => {}
+            if let CEvent::Key(key) = event::read()? {
+                Event::Key(key).handle(&mut world, &active);
             }
         }
 

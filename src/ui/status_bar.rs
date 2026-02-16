@@ -18,10 +18,9 @@ pub fn render_status_bar(
 ) {
     let (mode_text, mode_style) = match mode {
         EditorMode::Normal => ("NORMAL", theme.status_normal),
-        EditorMode::InputParticipant => ("INPUT", theme.status_input),
+        EditorMode::InputParticipant | EditorMode::InputMessage => ("INPUT", theme.status_input),
         EditorMode::SelectFrom => ("SELECT FROM", theme.status_select),
         EditorMode::SelectTo => ("SELECT TO", theme.status_select),
-        EditorMode::InputMessage => ("INPUT", theme.status_input),
         EditorMode::Help => ("HELP", theme.status_help),
     };
 
@@ -45,7 +44,7 @@ pub fn render_status_bar(
     };
 
     let mut spans = vec![
-        Span::styled(format!(" {} ", mode_text), mode_style),
+        Span::styled(format!(" {mode_text} "), mode_style),
         Span::raw(" "),
     ];
 
