@@ -25,7 +25,7 @@ Show
 
 Sleep 1.5s
 
-# Add participants
+# Add participants: Client(0), Gateway(1), Auth(2), Orders(3)
 Type "p"
 Sleep 600ms
 Type "Client"
@@ -54,13 +54,11 @@ Sleep 300ms
 Enter
 Sleep 1s
 
-# Client -> Gateway: Request
+# Client(0) -> Gateway(1): Request
 Type "e"
 Sleep 600ms
 Enter
 Sleep 400ms
-Down
-Sleep 300ms
 Enter
 Sleep 400ms
 Type "Request"
@@ -68,14 +66,14 @@ Sleep 300ms
 Enter
 Sleep 800ms
 
-# Gateway -> Auth: Validate Token
+# Gateway(1) -> Auth(2): Validate Token
 Type "e"
 Sleep 600ms
 Down
 Sleep 300ms
 Enter
 Sleep 400ms
-Down
+Down Down
 Sleep 300ms
 Enter
 Sleep 400ms
@@ -84,7 +82,7 @@ Sleep 300ms
 Enter
 Sleep 800ms
 
-# Auth -> Gateway: Token Valid
+# Auth(2) -> Gateway(1): Token Valid
 Type "e"
 Sleep 600ms
 Down Down
@@ -100,14 +98,14 @@ Sleep 300ms
 Enter
 Sleep 800ms
 
-# Gateway -> Orders: Get Orders
+# Gateway(1) -> Orders(3): Get Orders
 Type "e"
 Sleep 600ms
 Down
 Sleep 300ms
 Enter
 Sleep 400ms
-Down Down
+Down Down Down
 Sleep 300ms
 Enter
 Sleep 400ms
@@ -116,7 +114,7 @@ Sleep 300ms
 Enter
 Sleep 800ms
 
-# Orders -> Gateway: Order List
+# Orders(3) -> Gateway(1): Order List
 Type "e"
 Sleep 600ms
 Down Down Down
@@ -132,7 +130,7 @@ Sleep 300ms
 Enter
 Sleep 800ms
 
-# Gateway -> Client: Response
+# Gateway(1) -> Client(0): Response
 Type "e"
 Sleep 600ms
 Down
@@ -146,11 +144,53 @@ Sleep 300ms
 Enter
 Sleep 1.5s
 
-# Navigate and demonstrate selection
+# Navigate through events with j/k
 Type "j"
 Sleep 400ms
 Type "j"
 Sleep 400ms
 Type "j"
 Sleep 400ms
-Type "l
+Type "k"
+Sleep 400ms
+
+# Navigate through participants with h/l
+Type "l"
+Sleep 400ms
+Type "l"
+Sleep 400ms
+Type "l"
+Sleep 400ms
+Type "h"
+Sleep 400ms
+
+# Move a participant with H/L
+Type "L"
+Sleep 500ms
+Type "H"
+Sleep 500ms
+
+# Select an event and move it with J/K
+Type "j"
+Sleep 400ms
+Type "J"
+Sleep 500ms
+Type "K"
+Sleep 500ms
+
+# Show help
+Type "?"
+Sleep 2s
+Type "?"
+Sleep 600ms
+
+# Export to Mermaid
+Type "m"
+Sleep 1.2s
+
+# Quit
+Ctrl+c
+Sleep 600ms
+
+Type "cat diagram.mmd" Enter
+Sleep 3s
