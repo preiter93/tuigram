@@ -45,6 +45,6 @@ impl SequenceDiagram {
             }
         }
 
-        lines.join("\n")
+        lines.join("\n") + "\n"
     }
 }
