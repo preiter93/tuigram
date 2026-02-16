@@ -16,7 +16,7 @@ Set Width 1000
 Set Height 600
 Set Padding 20
 Set TypingSpeed 80ms
-Set Theme "Dracula"
+Set Theme "OneDark"
 
 Hide
 Type "tuigram" Enter
