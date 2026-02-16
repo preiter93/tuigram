@@ -10,6 +10,12 @@ A TUI sequence diagram editor.
 cargo run --release
 ```
 
+### Import from Mermaid
+
+```
+tuigram --import diagram.mmd
+```
+
 ## Keybindings
 
 | Key | Action |

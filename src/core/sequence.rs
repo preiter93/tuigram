@@ -1,4 +1,5 @@
 use super::models::Event;
+use anyhow::{Result, bail};
 
 #[derive(Default, Clone)]
 pub struct SequenceDiagram {
@@ -46,5 +47,146 @@ impl SequenceDiagram {
         }
 
         lines.join("\n") + "\n"
+    }
+
+    pub fn from_mermaid(input: &str) -> Result<Self> {
+        let mut diagram = SequenceDiagram::new();
+        let mut lines = input.lines();
+
+        // First line must be the header
+        let first_line = lines.next().map(|l| l.trim()).unwrap_or("");
+        if first_line != "sequenceDiagram" {
+            bail!("First line must be 'sequenceDiagram'");
+        }
+
+        // Parse remaining lines
+        for line in lines {
+            let trimmed = line.trim();
+
+            // Fail on empty lines or comments
+            if trimmed.is_empty() {
+                bail!("Empty lines are not supported");
+            }
+            if trimmed.starts_with("%%") {
+                bail!("Comments are not supported");
+            }
+
+            // Parse participant declaration
+            if let Some(rest) = trimmed.strip_prefix("participant ") {
+                let name = rest.trim().to_string();
+                if name.is_empty() {
+                    bail!("Invalid participant declaration: {}", line);
+                }
+                if !diagram.participants.contains(&name) {
+                    diagram.participants.push(name);
+                }
+                continue;
+            }
+
+            // Parse message: A->>B:text
+            if let Some(arrow_pos) = trimmed.find("->>") {
+                let from_name = trimmed[..arrow_pos].trim();
+                let rest = &trimmed[arrow_pos + 3..];
+
+                // Find the colon for the message
+                let (to_name, message) = if let Some(colon_pos) = rest.find(':') {
+                    let to = rest[..colon_pos].trim();
+                    let msg = rest[colon_pos + 1..].trim();
+                    (to, msg.to_string())
+                } else {
+                    bail!("Invalid message syntax (missing ':'): {}", line);
+                };
+
+                if from_name.is_empty() || to_name.is_empty() {
+                    bail!("Invalid message syntax: {}", line);
+                }
+
+                // Auto-add participants if not declared
+                if !diagram.participants.contains(&from_name.to_string()) {
+                    diagram.participants.push(from_name.to_string());
+                }
+                if !diagram.participants.contains(&to_name.to_string()) {
+                    diagram.participants.push(to_name.to_string());
+                }
+
+                let from_idx = diagram
+                    .participants
+                    .iter()
+                    .position(|p| p == from_name)
+                    .unwrap();
+
+                let to_idx = diagram
+                    .participants
+                    .iter()
+                    .position(|p| p == to_name)
+                    .unwrap();
+
+                diagram.events.push(Event::Message {
+                    from: from_idx,
+                    to: to_idx,
+                    text: message,
+                });
+                continue;
+            }
+
+            bail!("Unsupported Mermaid feature: {}", trimmed);
+        }
+
+        Ok(diagram)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_roundtrip() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_participant("Bob".to_string());
+        diagram.add_message(0, 1, "Hello".to_string());
+        diagram.add_message(1, 0, "Hi there".to_string());
+
+        let mermaid = diagram.to_mermaid();
+        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
+
+        assert_eq!(parsed.participants, diagram.participants);
+        assert_eq!(parsed.events.len(), diagram.events.len());
+    }
+
+    #[test]
+    fn test_from_mermaid_basic() {
+        let input = "sequenceDiagram
+    participant Alice
+    participant Bob
+    Alice->>Bob: Hello
+    Bob->>Alice: Hi";
+        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
+        assert_eq!(diagram.participants, vec!["Alice", "Bob"]);
+        assert_eq!(diagram.events.len(), 2);
+    }
+
+    #[test]
+    fn test_from_mermaid_auto_participants() {
+        let input = "sequenceDiagram
+    Alice->>Bob: Hello";
+        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
+        assert_eq!(diagram.participants, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn test_invalid_header() {
+        let input = "Alice->>Bob: Hello";
+        let result = SequenceDiagram::from_mermaid(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unsupported_feature() {
+        let input = "sequenceDiagram
+    Note right of Alice: This is a note";
+        let result = SequenceDiagram::from_mermaid(input);
+        assert!(result.is_err());
     }
 }

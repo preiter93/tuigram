@@ -1,9 +1,10 @@
 #![allow(clippy::too_many_lines)]
 
 use crate::{
-    core::{EditorMode, EditorState, Event, Selection, SequenceDiagram},
+    core::{Event, SequenceDiagram},
     render::{SequenceLayout, render_sequence},
     theme::Theme,
+    ui::state::{EditorMode, EditorState, Selection},
     ui::{help::render_help, input::render_input_popup, status_bar::render_status_bar},
 };
 use ratatui::{
@@ -26,9 +27,13 @@ pub struct AppState {
 }
 
 pub fn setup_world(world: &mut World) {
+    setup_world_with_diagram(world, SequenceDiagram::new());
+}
+
+pub fn setup_world_with_diagram(world: &mut World, diagram: SequenceDiagram) {
     world.insert(Theme::default());
     world.insert(AppState::default());
-    world.insert(SequenceDiagram::new());
+    world.insert(diagram);
     world.insert(EditorState::new());
 
     global_keybindings(world);

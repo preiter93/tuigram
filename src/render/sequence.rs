@@ -8,8 +8,9 @@ use ratatui::{
 };
 
 use crate::{
-    core::{Event, Selection, SequenceDiagram},
+    core::{Event, SequenceDiagram},
     theme::Theme,
+    ui::state::Selection,
 };
 
 pub struct ParticipantLayout {

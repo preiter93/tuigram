@@ -14,3 +14,4 @@ anyhow = "1.0"
 ratatui = "0.30.0"
 tui-world = "0.1.2"
 tui-theme-builder = "0.2"
+clap = { version = "4", features = ["derive"] }
