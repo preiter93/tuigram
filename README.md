@@ -10,12 +10,6 @@ A TUI sequence diagram editor.
 cargo run --release
 ```
 
-### Import from Mermaid
-
-```
-tuigram --import diagram.mmd
-```
-
 ## Keybindings
 
 | Key | Action |
@@ -32,9 +26,15 @@ tuigram --import diagram.mmd
 | `?` | Help |
 | `Ctrl+c` | Quit |
 
-## Export
+## Export to Mermaid
 
 Press `m` to export the diagram to `diagram.mmd` in Mermaid format.
+
+### Import from Mermaid
+
+```
+tuigram --import diagram.mmd
+```
 
 ## Roadmap
 
