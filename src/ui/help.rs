@@ -10,6 +10,8 @@ use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
 
+const HELP_WIDTH: u16 = 56;
+
 pub fn render_help(
     frame: &mut Frame,
     area: Rect,
@@ -30,10 +32,9 @@ pub fn render_help(
         })
         .collect();
 
-    let popup_width = 46u16;
     let popup_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
 
-    let popup_area = centered_rect(popup_width, popup_height, area);
+    let popup_area = centered_rect(HELP_WIDTH, popup_height, area);
 
     frame.render_widget(Clear, popup_area);
 

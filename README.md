@@ -36,7 +36,7 @@ Download the latest release from [GitHub Releases](https://github.com/preiter93/
 | `e` | Add event |
 | `h/l` | Navigate participants |
 | `j/k` | Navigate events |
-| `H/L` | Move participant left/right |
+| `H/L` | Move participant left/right, reverse event arrow |
 | `J/K` | Move event up/down |
 | `d` | Delete selected |
 | `Tab` | Cycle selection |

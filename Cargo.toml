@@ -12,6 +12,6 @@ license = "MIT"
 anyhow = "1.0"
 
 ratatui = "0.30.0"
-tui-world = "0.1.2"
+tui-world = { version = "0.1.2", path = "../tui-world" }
 tui-theme-builder = "0.2"
 clap = { version = "4", features = ["derive"] }
