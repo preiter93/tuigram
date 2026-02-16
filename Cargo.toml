@@ -1,0 +1,11 @@
+[package]
+name = "tuigram"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+
+ratatui = "0.30.0"
+tui-world = { version = "0.1", path = "../tui-world" }
+tui-theme-builder = "0.2"
