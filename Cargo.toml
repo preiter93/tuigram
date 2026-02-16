@@ -7,5 +7,5 @@ edition = "2024"
 anyhow = "1.0"
 
 ratatui = "0.30.0"
-tui-world = { version = "0.1", path = "../tui-world" }
+tui-world = "0.1.2"
 tui-theme-builder = "0.2"

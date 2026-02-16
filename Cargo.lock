@@ -1450,6 +1450,8 @@ dependencies = [
 [[package]]
 name = "tui-world"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "977eebfd8648af2849d1d028efe81ee8fa761c43331f36e3ea6afae270653672"
 dependencies = [
  "crossterm 0.29.0",
  "ratatui",
