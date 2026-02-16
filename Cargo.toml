@@ -2,6 +2,11 @@
 name = "tuigram"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/preiter93/tuigram"
+keywords = ["tui", "diagram", "sequence", "draw"]
+description = "A TUI sequence diagram editor"
+authors = ["preiter <phil.reiter93@gmail.com>"]
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0"
