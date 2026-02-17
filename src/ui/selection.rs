@@ -43,22 +43,28 @@ impl Selection {
         }
     }
 
-    pub fn next_event(self, event_count: usize, participant_count: usize) -> Self {
+    pub fn next(self, event_count: usize, participant_count: usize) -> Self {
         match self {
             Selection::Event(idx) if idx + 1 < event_count => Selection::Event(idx + 1),
             Selection::Event(_) if participant_count > 0 => Selection::Participant(0),
+            Selection::Participant(idx) if idx + 1 < participant_count => {
+                Selection::Participant(idx + 1)
+            }
+            Selection::Participant(_) if event_count > 0 => Selection::Event(0),
             _ if event_count > 0 => Selection::Event(0),
             _ if participant_count > 0 => Selection::Participant(0),
             _ => Selection::None,
         }
     }
 
-    pub fn prev_event(self, event_count: usize, participant_count: usize) -> Self {
+    pub fn prev(self, event_count: usize, participant_count: usize) -> Self {
         match self {
             Selection::Event(idx) if idx > 0 => Selection::Event(idx - 1),
             Selection::Event(_) if participant_count > 0 => {
                 Selection::Participant(participant_count - 1)
             }
+            Selection::Participant(idx) if idx > 0 => Selection::Participant(idx - 1),
+            Selection::Participant(_) if event_count > 0 => Selection::Event(event_count - 1),
             _ if event_count > 0 => Selection::Event(event_count - 1),
             _ if participant_count > 0 => Selection::Participant(participant_count - 1),
             _ => Selection::None,

@@ -224,7 +224,7 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'j', "Next event", |world| {
+    kb.bind(GLOBAL, 'j', "Next", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode != EditorMode::Normal {
             return;
@@ -235,11 +235,10 @@ fn global_keybindings(world: &mut World) {
         let participant_count = diagram.participant_count();
 
         let selection = world.get::<EditorState>().selection;
-        world.get_mut::<EditorState>().selection =
-            selection.next_event(event_count, participant_count);
+        world.get_mut::<EditorState>().selection = selection.next(event_count, participant_count);
     });
 
-    kb.bind(GLOBAL, 'k', "Previous event", |world| {
+    kb.bind(GLOBAL, 'k', "Previous", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode != EditorMode::Normal {
             return;
@@ -250,8 +249,7 @@ fn global_keybindings(world: &mut World) {
         let participant_count = diagram.participant_count();
 
         let selection = world.get::<EditorState>().selection;
-        world.get_mut::<EditorState>().selection =
-            selection.prev_event(event_count, participant_count);
+        world.get_mut::<EditorState>().selection = selection.prev(event_count, participant_count);
     });
 
     kb.bind(GLOBAL, 'l', "Next participant", |world| {
