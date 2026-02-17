@@ -57,18 +57,18 @@ impl SequenceDiagram {
     }
 
     pub fn point_event_left(&mut self, idx: usize) {
-        if let Some(Event::Message { from, to, .. }) = self.events.get_mut(idx) {
-            if *from < *to {
-                std::mem::swap(from, to);
-            }
+        if let Some(Event::Message { from, to, .. }) = self.events.get_mut(idx)
+            && *from < *to
+        {
+            std::mem::swap(from, to);
         }
     }
 
     pub fn point_event_right(&mut self, idx: usize) {
-        if let Some(Event::Message { from, to, .. }) = self.events.get_mut(idx) {
-            if *from > *to {
-                std::mem::swap(from, to);
-            }
+        if let Some(Event::Message { from, to, .. }) = self.events.get_mut(idx)
+            && *from > *to
+        {
+            std::mem::swap(from, to);
         }
     }
 

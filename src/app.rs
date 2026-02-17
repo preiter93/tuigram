@@ -188,7 +188,7 @@ fn global_keybindings(world: &mut World) {
                 Selection::Event(idx) => {
                     world.get_mut::<SequenceDiagram>().point_event_right(idx);
                 }
-                _ => {}
+                Selection::None => {}
             }
         },
     );

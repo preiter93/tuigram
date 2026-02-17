@@ -50,7 +50,6 @@ impl Selection {
             Selection::Participant(idx) if idx + 1 < participant_count => {
                 Selection::Participant(idx + 1)
             }
-            Selection::Participant(_) if event_count > 0 => Selection::Event(0),
             _ if event_count > 0 => Selection::Event(0),
             _ if participant_count > 0 => Selection::Participant(0),
             _ => Selection::None,
@@ -64,7 +63,6 @@ impl Selection {
                 Selection::Participant(participant_count - 1)
             }
             Selection::Participant(idx) if idx > 0 => Selection::Participant(idx - 1),
-            Selection::Participant(_) if event_count > 0 => Selection::Event(event_count - 1),
             _ if event_count > 0 => Selection::Event(event_count - 1),
             _ if participant_count > 0 => Selection::Participant(participant_count - 1),
             _ => Selection::None,
