@@ -46,12 +46,13 @@ impl Selection {
     pub fn next(self, event_count: usize, participant_count: usize) -> Self {
         match self {
             Selection::Event(idx) if idx + 1 < event_count => Selection::Event(idx + 1),
-            Selection::Event(_) if participant_count > 0 => Selection::Participant(0),
+            Selection::None | Selection::Event(_) if participant_count > 0 => {
+                Selection::Participant(0)
+            }
             Selection::Participant(idx) if idx + 1 < participant_count => {
                 Selection::Participant(idx + 1)
             }
             _ if event_count > 0 => Selection::Event(0),
-            _ if participant_count > 0 => Selection::Participant(0),
             _ => Selection::None,
         }
     }
