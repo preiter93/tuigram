@@ -7,30 +7,33 @@ A TUI sequence diagram editor.
 ## Installation
 
 <details>
-<summary>Installation options</summary>
-
-### Homebrew
+<summary><b>Homebrew</b></summary>
 
 ```
 brew install preiter93/tuigram/tuigram
 ```
+</details>
 
-### Nix
-
-```
-nix run github:preiter93/tuigram
-```
-
-### From crates.io
+<details>
+<summary><b>Cargo</b></summary>
 
 ```
 cargo install tuigram
 ```
+</details>
 
-### Pre-built binaries
+<details>
+<summary><b>Nix</b></summary>
 
-Download the latest release from [GitHub Releases](https://github.com/preiter93/tuigram/releases).
+```
+nix run github:preiter93/tuigram
+```
+</details>
 
+<details>
+<summary><b>Pre-built binaries</b></summary>
+
+Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 </details>
 
 ## Keybindings
