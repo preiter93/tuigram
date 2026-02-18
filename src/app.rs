@@ -496,58 +496,20 @@ pub fn render(frame: &mut Frame, world: &mut World) {
     let theme = world.get::<Theme>();
     let keybindings = world.get::<Keybindings>();
 
-    let selection = editor.selection;
-
     if diagram.participants.is_empty() {
-        render_empty_state(frame, diagram_area, theme);
+        render_empty_state(frame, diagram_area, world);
     } else {
-        render_sequence(frame, diagram_area, diagram, selection, theme);
+        render_sequence(frame, diagram_area, world);
     }
 
-    let has_selection = selection != Selection::None;
-
-    render_status_bar(
-        frame,
-        status_area,
-        &editor.mode,
-        editor.get_status(),
-        diagram.participant_count(),
-        has_selection,
-        theme,
-    );
+    render_status_bar(frame, status_area, world);
 
     match &editor.mode {
-        EditorMode::InputParticipant => {
-            render_input_popup(
-                frame,
-                "Add Participant",
-                &editor.input_buffer,
-                "Name:",
-                theme,
-            );
+        EditorMode::InputParticipant | EditorMode::InputMessage => {
+            render_input_popup(frame, world);
         }
         EditorMode::SelectFrom | EditorMode::SelectTo => {
-            render_dual_participant_selector(
-                frame,
-                area,
-                &diagram.participants,
-                editor.message_from,
-                editor.selected_index,
-                editor.mode == EditorMode::SelectFrom,
-                theme,
-            );
-        }
-        EditorMode::InputMessage => {
-            let from_name = editor
-                .message_from
-                .and_then(|i| diagram.participants.get(i))
-                .map_or("?", String::as_str);
-            let to_name = editor
-                .message_to
-                .and_then(|i| diagram.participants.get(i))
-                .map_or("?", String::as_str);
-            let prompt = format!("{from_name} → {to_name}:");
-            render_input_popup(frame, "Message", &editor.input_buffer, &prompt, theme);
+            render_dual_participant_selector(frame, area, world);
         }
         EditorMode::Help => {
             let active = vec![GLOBAL];
@@ -558,7 +520,8 @@ pub fn render(frame: &mut Frame, world: &mut World) {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
+fn render_empty_state(frame: &mut Frame, area: Rect, world: &World) {
+    let theme = world.get::<Theme>();
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme.border);
@@ -619,16 +582,15 @@ fn render_empty_state(frame: &mut Frame, area: Rect, theme: &Theme) {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-#[allow(clippy::too_many_arguments)]
-fn render_dual_participant_selector(
-    frame: &mut Frame,
-    area: Rect,
-    participants: &[String],
-    from_idx: Option<usize>,
-    cursor: usize,
-    selecting_from: bool,
-    theme: &Theme,
-) {
+fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
+    let editor = world.get::<EditorState>();
+    let diagram = world.get::<SequenceDiagram>();
+    let theme = world.get::<Theme>();
+
+    let participants = &diagram.participants;
+    let from_idx = editor.message_from;
+    let cursor = editor.selected_index;
+    let selecting_from = editor.mode == EditorMode::SelectFrom;
     let popup_width = 50.min(area.width.saturating_sub(4));
     let popup_height = (participants.len() as u16 + 4).min(area.height.saturating_sub(4));
 

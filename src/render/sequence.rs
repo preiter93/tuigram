@@ -6,24 +6,23 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Paragraph},
 };
+use tui_world::World;
 
 use crate::{
     core::{Event, SequenceDiagram},
     theme::Theme,
-    ui::Selection,
+    ui::{EditorState, Selection},
 };
 
 const HEADER_HEIGHT: u16 = 3;
 const MESSAGE_SPACING: u16 = 3;
 const FIRST_MESSAGE_OFFSET: u16 = 2;
 
-pub fn render_sequence(
-    f: &mut Frame,
-    outer_area: Rect,
-    diagram: &SequenceDiagram,
-    selection: Selection,
-    theme: &Theme,
-) {
+pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &World) {
+    let diagram = world.get::<SequenceDiagram>();
+    let selection = world.get::<EditorState>().selection;
+    let theme = world.get::<Theme>();
+
     f.render_widget(
         Block::default()
             .borders(Borders::ALL)

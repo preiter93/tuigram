@@ -4,16 +4,33 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
+use tui_world::World;
 
-use crate::theme::Theme;
+use super::{EditorMode, EditorState};
+use crate::{core::SequenceDiagram, theme::Theme};
 
-pub fn render_input_popup(
-    frame: &mut Frame,
-    title: &str,
-    input: &str,
-    prompt: &str,
-    theme: &Theme,
-) {
+pub fn render_input_popup(frame: &mut Frame, world: &World) {
+    let editor = world.get::<EditorState>();
+    let diagram = world.get::<SequenceDiagram>();
+    let theme = world.get::<Theme>();
+
+    let (title, prompt) = match &editor.mode {
+        EditorMode::InputParticipant => ("Add Participant".to_string(), "Name:".to_string()),
+        EditorMode::InputMessage => {
+            let from_name = editor
+                .message_from
+                .and_then(|i| diagram.participants.get(i))
+                .map_or("?", String::as_str);
+            let to_name = editor
+                .message_to
+                .and_then(|i| diagram.participants.get(i))
+                .map_or("?", String::as_str);
+            ("Message".to_string(), format!("{from_name} → {to_name}:"))
+        }
+        _ => return,
+    };
+
+    let input = &editor.input_buffer;
     let area = frame.area();
 
     let popup_width = 50.min(area.width.saturating_sub(4));

@@ -4,19 +4,21 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
+use tui_world::World;
 
-use super::EditorMode;
-use crate::theme::Theme;
+use super::{EditorMode, EditorState, Selection};
+use crate::{core::SequenceDiagram, theme::Theme};
 
-pub fn render_status_bar(
-    frame: &mut Frame,
-    area: Rect,
-    mode: &EditorMode,
-    status_message: Option<&str>,
-    participant_count: usize,
-    has_selection: bool,
-    theme: &Theme,
-) {
+pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
+    let editor = world.get::<EditorState>();
+    let diagram = world.get::<SequenceDiagram>();
+    let theme = world.get::<Theme>();
+
+    let mode = &editor.mode;
+    let status_message = editor.get_status();
+    let participant_count = diagram.participant_count();
+    let has_selection = editor.selection != Selection::None;
+
     let (mode_text, mode_style) = match mode {
         EditorMode::Normal => ("NORMAL", theme.status_normal),
         EditorMode::InputParticipant | EditorMode::InputMessage => ("INPUT", theme.status_input),
