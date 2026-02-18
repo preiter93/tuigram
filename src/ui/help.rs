@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use tui_world::{KeyBinding, Keybindings, WidgetId};
+use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
 

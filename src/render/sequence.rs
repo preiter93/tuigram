@@ -83,8 +83,7 @@ fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
         let width = name.len() as u16 + 4;
         let x = positions[i]
             .saturating_sub(width / 2)
-            .min(area.width.saturating_sub(width))
-            + 1;
+            .min(area.width.saturating_sub(width));
 
         f.render_widget(
             Paragraph::new(name.as_str())

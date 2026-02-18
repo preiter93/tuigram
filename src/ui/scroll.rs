@@ -41,18 +41,15 @@ impl ScrollState {
         (self.viewport_height / MESSAGE_SPACING) as usize
     }
 
-    /// Returns the range of visible event indices
     pub fn visible_range(&self, total_events: usize) -> std::ops::Range<usize> {
         let end = (self.offset + self.capacity()).min(total_events);
         self.offset..end
     }
 
-    /// Returns true if scrolling is needed
     pub fn needs_scroll(&self, total_events: usize) -> bool {
         total_events > self.capacity()
     }
 
-    /// Returns a `ScrollbarState` for rendering the scrollbar
     pub fn scrollbar_state(&self, total_events: usize) -> ScrollbarState {
         let max_offset = total_events.saturating_sub(self.capacity());
         ScrollbarState::new(max_offset + 1).position(self.offset)
