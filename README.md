@@ -1,5 +1,7 @@
 # Tuigram
 
+[![Crate IO](https://img.shields.io/crates/v/tuigram?logo=rust&style=flat-square&logoColor=E05D44&color=E05D44)](https://crates.io/crates/tuigram) ![Crates.io Downloads](https://img.shields.io/crates/d/tuigram?style=flat-square) [![Continuous Integration](https://github.com/preiter93/tuigram/actions/workflows/ci.yml/badge.svg)](https://github.com/preiter93/tuigram/actions/workflows/ci.yml) [![Deps Status](https://deps.rs/repo/github/preiter93/tuigram/status.svg?style=flat-square)](https://deps.rs/repo/github/preiter93/tuigram) [![License](https://img.shields.io/crates/l/tuigram?style=flat-square&color=09bd66)](./LICENSE)
+
 A TUI sequence diagram editor.
 
 ![Demo](demo/demo.gif)
