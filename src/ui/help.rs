@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use tui_world::{Keybindings, WidgetId};
+use tui_world::{KeyBinding, Keybindings, WidgetId};
 
 use crate::theme::Theme;
 
@@ -24,7 +24,7 @@ pub fn render_help(
     let lines: Vec<Line> = display
         .iter()
         .map(|info| {
-            let keys = shorten_keys(&info.keys_display());
+            let keys = info.keys_display_compact();
             Line::from(vec![
                 Span::styled(format!("{keys:>14}"), theme.key),
                 Span::raw("  "),
@@ -50,10 +50,6 @@ pub fn render_help(
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
-}
-
-fn shorten_keys(keys: &str) -> String {
-    keys.replace("Shift+", "S-").replace("BackTab", "Tab")
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

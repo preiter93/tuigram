@@ -225,7 +225,7 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'c', "Clear diagram", |world| {
+    kb.bind(GLOBAL, 'C', "Clear diagram", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
             let diagram = world.get_mut::<SequenceDiagram>();
