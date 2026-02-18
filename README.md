@@ -6,6 +6,9 @@ A TUI sequence diagram editor.
 
 ## Installation
 
+<details>
+<summary>Installation options</summary>
+
 ### Homebrew
 
 ```
@@ -27,6 +30,8 @@ cargo install tuigram
 ### Pre-built binaries
 
 Download the latest release from [GitHub Releases](https://github.com/preiter93/tuigram/releases).
+
+</details>
 
 ## Keybindings
 
