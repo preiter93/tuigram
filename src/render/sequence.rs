@@ -11,39 +11,40 @@ use tui_world::World;
 use crate::{
     core::{Event, SequenceDiagram},
     theme::Theme,
-    ui::{EditorState, Selection},
+    ui::{
+        EditorState, Selection,
+        scroll::{FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, MESSAGE_SPACING, ScrollState},
+    },
 };
 
-const HEADER_HEIGHT: u16 = 3;
-const MESSAGE_SPACING: u16 = 3;
-const FIRST_MESSAGE_OFFSET: u16 = 2;
+pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
+    let selection = world.get::<EditorState>().selection;
+    let area = outer_area.inner(Margin::new(0, 1));
 
-pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &World) {
+    world.get_mut::<ScrollState>().set_viewport(area.height);
+
+    if let Selection::Event(idx) = selection {
+        world.get_mut::<ScrollState>().ensure_visible(idx);
+    }
+
+    let theme = world.get::<Theme>();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border);
+    f.render_widget(block, outer_area);
+
+    let participants = render_participants(f, area, world);
+    let lifeline_start = area.y + HEADER_HEIGHT;
+    render_lifelines(f, area, world, &participants, lifeline_start);
+    render_events(f, world, &participants, lifeline_start);
+}
+
+fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
     let diagram = world.get::<SequenceDiagram>();
     let selection = world.get::<EditorState>().selection;
     let theme = world.get::<Theme>();
 
-    f.render_widget(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.border),
-        outer_area,
-    );
-
-    let area = outer_area.inner(Margin::new(0, 1));
-
-    let participants = render_participants(f, area, diagram, selection, theme);
-    let lifeline_start = render_lifelines(f, area, theme, &participants);
-    render_events(f, diagram, selection, theme, &participants, lifeline_start);
-}
-
-pub fn render_participants(
-    f: &mut Frame,
-    area: Rect,
-    diagram: &SequenceDiagram,
-    selection: Selection,
-    theme: &Theme,
-) -> Vec<u16> {
     let count = diagram.participants.len().max(1) as u16;
     let spacing = area.width / (count + 1);
 
@@ -81,8 +82,15 @@ pub fn render_participants(
     positions
 }
 
-fn render_lifelines(f: &mut Frame, area: Rect, theme: &Theme, participants: &[u16]) -> u16 {
-    let lifeline_start = area.y + HEADER_HEIGHT;
+fn render_lifelines(
+    f: &mut Frame,
+    area: Rect,
+    world: &World,
+    participants: &[u16],
+    lifeline_start: u16,
+) {
+    let theme = world.get::<Theme>();
+
     for &x in participants {
         let xi = x.min(area.width - 1);
         for y in lifeline_start..area.y + area.height {
@@ -97,22 +105,25 @@ fn render_lifelines(f: &mut Frame, area: Rect, theme: &Theme, participants: &[u1
             );
         }
     }
-    lifeline_start
 }
 
-pub fn render_events(
-    f: &mut Frame,
-    diagram: &SequenceDiagram,
-    selection: Selection,
-    theme: &Theme,
-    participants: &[u16],
-    lifeline_start: u16,
-) {
-    for (i, event) in diagram.events.iter().enumerate() {
+fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_start: u16) {
+    let diagram = world.get::<SequenceDiagram>();
+    let selection = world.get::<EditorState>().selection;
+    let theme = world.get::<Theme>();
+    let scroll = world.get::<ScrollState>();
+    let visible_range = scroll.visible_range(diagram.event_count());
+    let scroll_offset = scroll.offset;
+
+    for i in visible_range {
+        let Some(event) = diagram.events.get(i) else {
+            continue;
+        };
         let Event::Message { from, to, text } = event;
         let from_x = participants[*from];
         let to_x = participants[*to];
-        let y = lifeline_start + FIRST_MESSAGE_OFFSET + (i as u16 * MESSAGE_SPACING);
+        let visible_index = i - scroll_offset;
+        let y = lifeline_start + FIRST_MESSAGE_OFFSET + (visible_index as u16 * MESSAGE_SPACING);
 
         let style = if selection == Selection::Event(i) {
             theme.selected

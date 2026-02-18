@@ -485,22 +485,21 @@ pub fn active_widgets(world: &World) -> Vec<WidgetId> {
 pub fn render(frame: &mut Frame, world: &mut World) {
     let area = frame.area();
     world.get_mut::<AppState>().area = area;
-    world.get_mut::<ScrollState>().height = area.height;
-    world.get_mut::<ScrollState>().offset = 2; // TESTING
 
     let [diagram_area, status_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
 
-    let diagram = world.get::<SequenceDiagram>();
-    let editor = world.get::<EditorState>();
-    let theme = world.get::<Theme>();
-    let keybindings = world.get::<Keybindings>();
+    let is_empty = world.get::<SequenceDiagram>().participants.is_empty();
 
-    if diagram.participants.is_empty() {
+    if is_empty {
         render_empty_state(frame, diagram_area, world);
     } else {
         render_sequence(frame, diagram_area, world);
     }
+
+    let editor = world.get::<EditorState>();
+    let theme = world.get::<Theme>();
+    let keybindings = world.get::<Keybindings>();
 
     render_status_bar(frame, status_area, world);
 
