@@ -1,10 +1,18 @@
-# Tuigram
+<h1 align="center">Tuigram</h1>
 
-[![Crate IO](https://img.shields.io/crates/v/tuigram?logo=rust&style=flat-square&logoColor=E05D44&color=E05D44)](https://crates.io/crates/tuigram) ![Crates.io Downloads](https://img.shields.io/crates/d/tuigram?style=flat-square) [![Continuous Integration](https://github.com/preiter93/tuigram/actions/workflows/ci.yml/badge.svg)](https://github.com/preiter93/tuigram/actions/workflows/ci.yml) [![Deps Status](https://deps.rs/repo/github/preiter93/tuigram/status.svg?style=flat-square)](https://deps.rs/repo/github/preiter93/tuigram) [![License](https://img.shields.io/crates/l/tuigram?style=flat-square&color=09bd66)](./LICENSE)
+<p align="center">
+  <a href="https://crates.io/crates/tuigram"><img src="https://img.shields.io/crates/v/tuigram?logo=rust&style=flat-square&logoColor=E05D44&color=E05D44" alt="Crate IO"></a>
+  <img src="https://img.shields.io/crates/d/tuigram?style=flat-square" alt="Crates.io Downloads">
+  <a href="https://github.com/preiter93/tuigram/actions/workflows/ci.yml"><img src="https://github.com/preiter93/tuigram/actions/workflows/ci.yml/badge.svg" alt="Continuous Integration"></a>
+  <a href="https://deps.rs/repo/github/preiter93/tuigram"><img src="https://deps.rs/repo/github/preiter93/tuigram/status.svg?style=flat-square" alt="Deps Status"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/crates/l/tuigram?style=flat-square&color=09bd66" alt="License"></a>
+</p>
 
-A TUI sequence diagram editor.
+<p align="center">
+  <img src="demo/demo.gif" alt="Demo">
+</p>
 
-![Demo](demo/demo.gif)
+<p align="center"><em>A TUI sequence diagram editor.</em></p>
 
 ## Installation
 
