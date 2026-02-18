@@ -4,7 +4,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Margin, Rect},
     text::Line,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation},
 };
 use tui_world::World;
 
@@ -38,6 +38,27 @@ pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
     let lifeline_start = area.y + HEADER_HEIGHT;
     render_lifelines(f, area, world, &participants, lifeline_start);
     render_events(f, world, &participants, lifeline_start);
+    render_scrollbar(f, area, world);
+}
+
+fn render_scrollbar(f: &mut Frame, area: Rect, world: &World) {
+    let diagram = world.get::<SequenceDiagram>();
+    let scroll = world.get::<ScrollState>();
+    let event_count = diagram.event_count();
+
+    if !scroll.needs_scroll(event_count) {
+        return;
+    }
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+    let scrollbar_area = Rect {
+        x: area.x,
+        y: area.y + HEADER_HEIGHT,
+        width: area.width,
+        height: area.height.saturating_sub(HEADER_HEIGHT),
+    };
+    let mut scrollbar_state = scroll.scrollbar_state(event_count);
+    f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
 fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
