@@ -4,8 +4,10 @@ use crate::{
     core::SequenceDiagram,
     render::render_sequence,
     theme::Theme,
-    ui::{EditorMode, EditorState, Selection},
-    ui::{help::render_help, input::render_input_popup, status_bar::render_status_bar},
+    ui::{
+        EditorMode, EditorState, Selection, help::render_help, input::render_input_popup,
+        scroll::ScrollState, status_bar::render_status_bar,
+    },
 };
 use ratatui::{
     Frame,
@@ -31,6 +33,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram) {
     world.insert(AppState::default());
     world.insert(diagram);
     world.insert(EditorState::new());
+    world.insert(ScrollState::new());
 
     global_keybindings(world);
     input_mode_keybindings(world);
@@ -542,6 +545,8 @@ pub fn active_widgets(world: &World) -> Vec<WidgetId> {
 pub fn render(frame: &mut Frame, world: &mut World) {
     let area = frame.area();
     world.get_mut::<AppState>().area = area;
+    world.get_mut::<ScrollState>().height = area.height;
+    world.get_mut::<ScrollState>().offset = 2; // TESTING
 
     let [diagram_area, status_area] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);

@@ -24,60 +24,67 @@ pub fn render_sequence(
     selection: Selection,
     theme: &Theme,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border);
-    f.render_widget(block, outer_area);
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border),
+        outer_area,
+    );
 
     let area = outer_area.inner(Margin::new(0, 1));
+
+    let participants = render_participants(f, area, diagram, selection, theme);
+    let lifeline_start = render_lifelines(f, area, theme, &participants);
+    render_events(f, diagram, selection, theme, &participants, lifeline_start);
+}
+
+pub fn render_participants(
+    f: &mut Frame,
+    area: Rect,
+    diagram: &SequenceDiagram,
+    selection: Selection,
+    theme: &Theme,
+) -> Vec<u16> {
     let count = diagram.participants.len().max(1) as u16;
     let spacing = area.width / (count + 1);
 
-    // Render participants
     let positions: Vec<u16> = (0..diagram.participants.len())
         .map(|i| spacing * (i as u16 + 1))
         .collect();
 
     for (i, name) in diagram.participants.iter().enumerate() {
-        let x = positions[i];
-        let is_selected = selection == Selection::Participant(i);
-        let style = if is_selected {
+        let style = if selection == Selection::Participant(i) {
             theme.selected
         } else {
             theme.text
         };
 
-        let width = (name.len() as u16).saturating_add(4);
-        let box_x = x
+        let width = name.len() as u16 + 4;
+        let x = positions[i]
             .saturating_sub(width / 2)
-            .min(area.width.saturating_sub(width));
-        let box_area = Rect {
-            x: box_x,
-            y: area.y,
-            width,
-            height: 3,
-        };
+            .min(area.width.saturating_sub(width))
+            + 1;
 
-        f.render_widget(
-            Block::default().borders(Borders::ALL).border_style(style),
-            box_area,
-        );
         f.render_widget(
             Paragraph::new(name.as_str())
                 .alignment(Alignment::Center)
-                .style(style),
+                .style(style)
+                .block(Block::default().borders(Borders::ALL).border_style(style)),
             Rect {
-                x: box_x + 1,
-                y: area.y + 1,
-                width: width - 2,
-                height: 1,
+                x: x,
+                y: area.y,
+                width: width,
+                height: 3,
             },
         );
     }
 
-    // Render lifelines
+    positions
+}
+
+fn render_lifelines(f: &mut Frame, area: Rect, theme: &Theme, participants: &[u16]) -> u16 {
     let lifeline_start = area.y + HEADER_HEIGHT;
-    for &x in &positions {
+    for &x in participants {
         let xi = x.min(area.width - 1);
         for y in lifeline_start..area.y + area.height {
             f.render_widget(
@@ -91,66 +98,51 @@ pub fn render_sequence(
             );
         }
     }
+    lifeline_start
+}
 
-    // Render messages
+pub fn render_events(
+    f: &mut Frame,
+    diagram: &SequenceDiagram,
+    selection: Selection,
+    theme: &Theme,
+    participants: &[u16],
+    lifeline_start: u16,
+) {
     for (i, event) in diagram.events.iter().enumerate() {
         let Event::Message { from, to, text } = event;
-        let from_x = positions[*from];
-        let to_x = positions[*to];
+        let from_x = participants[*from];
+        let to_x = participants[*to];
         let y = lifeline_start + FIRST_MESSAGE_OFFSET + (i as u16 * MESSAGE_SPACING);
 
-        let is_selected = selection == Selection::Event(i);
-        let style = if is_selected {
+        let style = if selection == Selection::Event(i) {
             theme.selected
         } else {
             theme.text
         };
 
-        // Render as loop-back
         if from == to {
             let loop_width: u16 = 4;
-            let x = from_x;
 
-            f.render_widget(
-                Paragraph::new("───┐").style(style),
-                Rect {
-                    x,
-                    y: y.saturating_sub(1),
-                    width: loop_width,
-                    height: 1,
-                },
-            );
+            let mut area = Rect {
+                x: from_x,
+                y: y.saturating_sub(1),
+                width: loop_width,
+                height: 1,
+            };
 
-            f.render_widget(
-                Paragraph::new("   │").style(style),
-                Rect {
-                    x,
-                    y,
-                    width: loop_width,
-                    height: 1,
-                },
-            );
+            f.render_widget(Paragraph::new("───┐").style(style), area);
 
-            f.render_widget(
-                Paragraph::new("◄──┘").style(style),
-                Rect {
-                    x,
-                    y: y + 1,
-                    width: loop_width,
-                    height: 1,
-                },
-            );
+            area.y = y;
+            f.render_widget(Paragraph::new("   │").style(style), area);
 
-            let text_width = text.len() as u16;
-            f.render_widget(
-                Paragraph::new(text.as_str()).style(style),
-                Rect {
-                    x: x + loop_width,
-                    y,
-                    width: text_width,
-                    height: 1,
-                },
-            );
+            area.y = y + 1;
+            f.render_widget(Paragraph::new("◀──┘").style(style), area);
+
+            area.x = from_x + loop_width;
+            area.y = y;
+            area.width = text.len() as u16;
+            f.render_widget(Paragraph::new(text.as_str()).style(style), area);
         } else {
             let start = from_x.min(to_x);
             let end = from_x.max(to_x);
@@ -158,9 +150,9 @@ pub fn render_sequence(
 
             let mut arrow = "─".repeat(len as usize);
             if from_x < to_x {
-                arrow.push('>');
+                arrow.push('▶');
             } else {
-                arrow.insert(0, '<');
+                arrow.insert(0, '◀');
             }
 
             f.render_widget(
