@@ -110,7 +110,14 @@ fn render_lifelines(
     participants: &[u16],
     lifeline_start: u16,
 ) {
+    let diagram = world.get::<SequenceDiagram>();
+    let scroll = world.get::<ScrollState>();
     let theme = world.get::<Theme>();
+    let event_count = diagram.event_count();
+
+    let visible_range = scroll.visible_range(event_count);
+    let has_above = visible_range.start > 0;
+    let has_below = visible_range.end < event_count;
 
     for &x in participants {
         let xi = x.min(area.width - 1);
@@ -120,6 +127,31 @@ fn render_lifelines(
                 Rect {
                     x: xi,
                     y,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+
+        // Show scroll indicators on lifelines
+        if has_above {
+            f.render_widget(
+                Paragraph::new("⋮").style(theme.muted),
+                Rect {
+                    x: xi,
+                    y: lifeline_start,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+
+        if has_below {
+            f.render_widget(
+                Paragraph::new("⋮").style(theme.muted),
+                Rect {
+                    x: xi,
+                    y: area.y + area.height - 1,
                     width: 1,
                     height: 1,
                 },
