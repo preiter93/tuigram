@@ -71,9 +71,9 @@ pub fn render_participants(
                 .style(style)
                 .block(Block::default().borders(Borders::ALL).border_style(style)),
             Rect {
-                x: x,
+                x,
                 y: area.y,
-                width: width,
+                width,
                 height: 3,
             },
         );

@@ -26,7 +26,6 @@ impl Selection {
                 } else if event_count > 0 {
                     Selection::Event(0)
                 } else {
-                    // Stay at last participant, don't cycle
                     Selection::Participant(idx)
                 }
             }
@@ -34,7 +33,6 @@ impl Selection {
                 if idx + 1 < event_count {
                     Selection::Event(idx + 1)
                 } else {
-                    // Stay at last event, don't cycle
                     Selection::Event(idx)
                 }
             }
@@ -52,7 +50,6 @@ impl Selection {
                 } else if participant_count > 0 {
                     Selection::Participant(participant_count - 1)
                 } else {
-                    // Stay at first event, don't cycle
                     Selection::Event(0)
                 }
             }
@@ -60,7 +57,6 @@ impl Selection {
                 if idx > 0 {
                     Selection::Participant(idx - 1)
                 } else {
-                    // Stay at first participant, don't cycle
                     Selection::Participant(0)
                 }
             }

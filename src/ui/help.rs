@@ -26,7 +26,7 @@ pub fn render_help(
         .map(|info| {
             let keys = shorten_keys(&info.keys_display());
             Line::from(vec![
-                Span::styled(format!("{:>14}", keys), theme.key),
+                Span::styled(format!("{keys:>14}"), theme.key),
                 Span::raw("  "),
                 Span::styled(info.name, theme.text),
             ])
