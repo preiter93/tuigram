@@ -234,7 +234,7 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'm', "Export Mermaid", |world| {
+    kb.bind(GLOBAL, 'M', "Export Mermaid", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
             let diagram = world.get::<SequenceDiagram>();

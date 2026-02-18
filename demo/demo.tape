@@ -197,7 +197,7 @@ Type "?"
 Sleep 600ms
 
 # Export to Mermaid
-Type "m"
+Type "M"
 Sleep 1.2s
 
 # Quit
