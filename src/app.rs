@@ -11,12 +11,13 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    crossterm::event::KeyCode,
+    crossterm::event::{KeyCode, KeyModifiers},
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 use std::fs;
+use tui_world::keys;
 use tui_world::{KeyBinding, Keybindings, WidgetId, World};
 
 pub const GLOBAL: WidgetId = WidgetId("Global");
@@ -103,10 +104,10 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(
+    kb.bind_many(
         GLOBAL,
-        KeyBinding::key(KeyCode::Tab),
-        "Next item",
+        keys!['j', 'l', KeyCode::Tab],
+        "Select Next",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
@@ -118,31 +119,28 @@ fn global_keybindings(world: &mut World) {
             let event_count = diagram.event_count();
 
             let selection = world.get::<EditorState>().selection;
-            let new_selection = selection.cycle(participant_count, event_count);
-            world.get_mut::<EditorState>().selection = new_selection;
+            world.get_mut::<EditorState>().selection =
+                selection.next(participant_count, event_count);
         },
     );
 
-    kb.bind(
+    kb.bind_many(
         GLOBAL,
-        KeyBinding::new(
-            KeyCode::BackTab,
-            ratatui::crossterm::event::KeyModifiers::SHIFT,
-        ),
-        "Previous item",
+        keys![
+            'k',
+            'h',
+            KeyBinding::new(KeyCode::BackTab, KeyModifiers::SHIFT)
+        ],
+        "Select Previous",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
                 return;
             }
 
-            let diagram = world.get::<SequenceDiagram>();
-            let participant_count = diagram.participant_count();
-            let event_count = diagram.event_count();
-
+            let participant_count = world.get::<SequenceDiagram>().participant_count();
             let selection = world.get::<EditorState>().selection;
-            let new_selection = selection.cycle_back(participant_count, event_count);
-            world.get_mut::<EditorState>().selection = new_selection;
+            world.get_mut::<EditorState>().selection = selection.prev(participant_count);
         },
     );
 
@@ -225,64 +223,6 @@ fn global_keybindings(world: &mut World) {
             world.get_mut::<SequenceDiagram>().events.swap(idx, idx - 1);
             world.get_mut::<EditorState>().selection = Selection::Event(idx - 1);
         }
-    });
-
-    kb.bind(GLOBAL, 'j', "Next", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
-
-        let diagram = world.get::<SequenceDiagram>();
-        let event_count = diagram.event_count();
-        let participant_count = diagram.participant_count();
-
-        let selection = world.get::<EditorState>().selection;
-        world.get_mut::<EditorState>().selection = selection.next(event_count, participant_count);
-    });
-
-    kb.bind(GLOBAL, 'k', "Previous", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
-
-        let diagram = world.get::<SequenceDiagram>();
-        let event_count = diagram.event_count();
-        let participant_count = diagram.participant_count();
-
-        let selection = world.get::<EditorState>().selection;
-        world.get_mut::<EditorState>().selection = selection.prev(event_count, participant_count);
-    });
-
-    kb.bind(GLOBAL, 'l', "Next participant", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
-
-        let diagram = world.get::<SequenceDiagram>();
-        let participant_count = diagram.participant_count();
-        let event_count = diagram.event_count();
-
-        let selection = world.get::<EditorState>().selection;
-        world.get_mut::<EditorState>().selection =
-            selection.next_participant(participant_count, event_count);
-    });
-
-    kb.bind(GLOBAL, 'h', "Previous participant", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
-
-        let diagram = world.get::<SequenceDiagram>();
-        let participant_count = diagram.participant_count();
-        let event_count = diagram.event_count();
-
-        let selection = world.get::<EditorState>().selection;
-        world.get_mut::<EditorState>().selection =
-            selection.prev_participant(participant_count, event_count);
     });
 
     kb.bind(GLOBAL, 'c', "Clear diagram", |world| {
@@ -403,7 +343,7 @@ fn input_mode_keybindings(world: &mut World) {
     );
 
     kb.bind(INPUT_MODE, KeyBinding::key(KeyCode::Up), "Up", |world| {
-        handle_selection_nav(world, -1);
+        handle_input_mode_nav(world, -1);
     });
 
     kb.bind(
@@ -411,7 +351,7 @@ fn input_mode_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Down),
         "Down",
         |world| {
-            handle_selection_nav(world, 1);
+            handle_input_mode_nav(world, 1);
         },
     );
 
@@ -420,7 +360,7 @@ fn input_mode_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Left),
         "Left",
         |world| {
-            handle_selection_nav(world, -1);
+            handle_input_mode_nav(world, -1);
         },
     );
 
@@ -429,14 +369,14 @@ fn input_mode_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Right),
         "Right",
         |world| {
-            handle_selection_nav(world, 1);
+            handle_input_mode_nav(world, 1);
         },
     );
 
     kb.bind(INPUT_MODE, 'k', "Up", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
-            handle_selection_nav(world, -1);
+            handle_input_mode_nav(world, -1);
         } else if matches!(
             mode,
             EditorMode::InputParticipant | EditorMode::InputMessage
@@ -448,7 +388,7 @@ fn input_mode_keybindings(world: &mut World) {
     kb.bind(INPUT_MODE, 'j', "Down", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
-            handle_selection_nav(world, 1);
+            handle_input_mode_nav(world, 1);
         } else if matches!(
             mode,
             EditorMode::InputParticipant | EditorMode::InputMessage
@@ -460,7 +400,7 @@ fn input_mode_keybindings(world: &mut World) {
     kb.bind(INPUT_MODE, 'h', "Left", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
-            handle_selection_nav(world, -1);
+            handle_input_mode_nav(world, -1);
         } else if matches!(
             mode,
             EditorMode::InputParticipant | EditorMode::InputMessage
@@ -472,7 +412,7 @@ fn input_mode_keybindings(world: &mut World) {
     kb.bind(INPUT_MODE, 'l', "Right", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
-            handle_selection_nav(world, 1);
+            handle_input_mode_nav(world, 1);
         } else if matches!(
             mode,
             EditorMode::InputParticipant | EditorMode::InputMessage
@@ -517,7 +457,7 @@ fn input_mode_keybindings(world: &mut World) {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
-fn handle_selection_nav(world: &mut World, delta: i32) {
+fn handle_input_mode_nav(world: &mut World, delta: i32) {
     let mode = world.get::<EditorState>().mode.clone();
     if !matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
         return;

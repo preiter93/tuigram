@@ -7,95 +7,9 @@ pub enum Selection {
 }
 
 impl Selection {
-    pub fn cycle_back(self, participant_count: usize, event_count: usize) -> Self {
-        match self {
-            Selection::None => {
-                if event_count > 0 {
-                    Selection::Event(event_count - 1)
-                } else if participant_count > 0 {
-                    Selection::Participant(participant_count - 1)
-                } else {
-                    Selection::None
-                }
-            }
-            Selection::Participant(idx) => {
-                if idx > 0 {
-                    Selection::Participant(idx - 1)
-                } else if event_count > 0 {
-                    Selection::Event(event_count - 1)
-                } else if participant_count > 0 {
-                    Selection::Participant(participant_count - 1)
-                } else {
-                    Selection::None
-                }
-            }
-            Selection::Event(idx) => {
-                if idx > 0 {
-                    Selection::Event(idx - 1)
-                } else if participant_count > 0 {
-                    Selection::Participant(participant_count - 1)
-                } else if event_count > 0 {
-                    Selection::Event(event_count - 1)
-                } else {
-                    Selection::None
-                }
-            }
-        }
-    }
-
-    pub fn next(self, event_count: usize, participant_count: usize) -> Self {
-        match self {
-            Selection::Event(idx) if idx + 1 < event_count => Selection::Event(idx + 1),
-            Selection::None | Selection::Event(_) if participant_count > 0 => {
-                Selection::Participant(0)
-            }
-            Selection::Participant(idx) if idx + 1 < participant_count => {
-                Selection::Participant(idx + 1)
-            }
-            _ if event_count > 0 => Selection::Event(0),
-            _ => Selection::None,
-        }
-    }
-
-    pub fn prev(self, event_count: usize, participant_count: usize) -> Self {
-        match self {
-            Selection::Event(idx) if idx > 0 => Selection::Event(idx - 1),
-            Selection::Event(_) if participant_count > 0 => {
-                Selection::Participant(participant_count - 1)
-            }
-            Selection::Participant(idx) if idx > 0 => Selection::Participant(idx - 1),
-            _ if event_count > 0 => Selection::Event(event_count - 1),
-            _ if participant_count > 0 => Selection::Participant(participant_count - 1),
-            _ => Selection::None,
-        }
-    }
-
-    pub fn next_participant(self, participant_count: usize, event_count: usize) -> Self {
-        match self {
-            Selection::Participant(idx) if idx + 1 < participant_count => {
-                Selection::Participant(idx + 1)
-            }
-            Selection::Participant(_) if event_count > 0 => Selection::Event(0),
-            _ if participant_count > 0 => Selection::Participant(0),
-            _ if event_count > 0 => Selection::Event(0),
-            _ => Selection::None,
-        }
-    }
-
-    pub fn prev_participant(self, participant_count: usize, event_count: usize) -> Self {
-        match self {
-            Selection::Participant(idx) if idx > 0 => Selection::Participant(idx - 1),
-            Selection::Participant(_) if event_count > 0 => Selection::Event(event_count - 1),
-            Selection::Participant(_) if participant_count > 0 => {
-                Selection::Participant(participant_count - 1)
-            }
-            _ if participant_count > 0 => Selection::Participant(participant_count - 1),
-            _ if event_count > 0 => Selection::Event(event_count - 1),
-            _ => Selection::None,
-        }
-    }
-
-    pub fn cycle(self, participant_count: usize, event_count: usize) -> Self {
+    /// Move to the next item in order: Participants -> Events
+    /// Does not cycle - stops at the last event
+    pub fn next(self, participant_count: usize, event_count: usize) -> Self {
         match self {
             Selection::None => {
                 if participant_count > 0 {
@@ -111,21 +25,43 @@ impl Selection {
                     Selection::Participant(idx + 1)
                 } else if event_count > 0 {
                     Selection::Event(0)
-                } else if participant_count > 0 {
-                    Selection::Participant(0)
                 } else {
-                    Selection::None
+                    // Stay at last participant, don't cycle
+                    Selection::Participant(idx)
                 }
             }
             Selection::Event(idx) => {
                 if idx + 1 < event_count {
                     Selection::Event(idx + 1)
-                } else if participant_count > 0 {
-                    Selection::Participant(0)
-                } else if event_count > 0 {
-                    Selection::Event(0)
                 } else {
-                    Selection::None
+                    // Stay at last event, don't cycle
+                    Selection::Event(idx)
+                }
+            }
+        }
+    }
+
+    /// Move to the previous item in order: Events -> Participants
+    /// Does not cycle - stops at the first participant
+    pub fn prev(self, participant_count: usize) -> Self {
+        match self {
+            Selection::None => Selection::None,
+            Selection::Event(idx) => {
+                if idx > 0 {
+                    Selection::Event(idx - 1)
+                } else if participant_count > 0 {
+                    Selection::Participant(participant_count - 1)
+                } else {
+                    // Stay at first event, don't cycle
+                    Selection::Event(0)
+                }
+            }
+            Selection::Participant(idx) => {
+                if idx > 0 {
+                    Selection::Participant(idx - 1)
+                } else {
+                    // Stay at first participant, don't cycle
+                    Selection::Participant(0)
                 }
             }
         }

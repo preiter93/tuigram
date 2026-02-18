@@ -55,7 +55,7 @@ fn run(diagram: SequenceDiagram) -> anyhow::Result<()> {
             let active = app::active_widgets(&world);
 
             if let CEvent::Key(key) = event::read()? {
-                Event::Key(key).handle(&mut world, &active);
+                InputEvent::Key(key).handle(&mut world, &active);
             }
         }
 

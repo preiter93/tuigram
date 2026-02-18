@@ -6,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
 };
+use std::collections::HashMap;
 use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
@@ -21,13 +22,25 @@ pub fn render_help(
 ) {
     let display = keybindings.display_for(active);
 
-    let lines: Vec<Line> = display
+    // Group bindings by name, preserving order of first occurrence
+    let mut grouped: HashMap<&'static str, Vec<String>> = HashMap::new();
+    let mut order: Vec<&'static str> = Vec::new();
+    for info in &display {
+        let key_str = shorten_key(&info.key.display());
+        if !grouped.contains_key(info.name) {
+            order.push(info.name);
+        }
+        grouped.entry(info.name).or_default().push(key_str);
+    }
+
+    let lines: Vec<Line> = order
         .iter()
-        .map(|info| {
+        .map(|name| {
+            let keys = grouped.get(name).unwrap().join("/");
             Line::from(vec![
-                Span::styled(format!("{:>14}", info.key.display()), theme.key),
+                Span::styled(format!("{:>14}", keys), theme.key),
                 Span::raw("  "),
-                Span::styled(info.name, theme.text),
+                Span::styled(*name, theme.text),
             ])
         })
         .collect();
@@ -49,6 +62,11 @@ pub fn render_help(
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
+}
+
+fn shorten_key(key: &str) -> String {
+    key.replace("Shift+BackTab", "S-Tab")
+        .replace("Backspace", "Bksp")
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
