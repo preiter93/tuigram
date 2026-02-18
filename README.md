@@ -39,26 +39,24 @@ Download the latest release from [GitHub Releases](https://github.com/preiter93/
 |-----|--------|
 | `p` | Add participant |
 | `e` | Add event |
-| `h/l` | Navigate participants |
-| `j/k` | Navigate events |
+| `j/k/Tab` | Navigate next/previous |
+| `h/l/S-Tab` | Navigate next/previous |
 | `H/L` | Move participant left/right, reverse event arrow |
 | `J/K` | Move event up/down |
 | `d` | Delete selected |
-| `Tab` | Cycle selection |
-| `m` | Export to Mermaid |
+| `M` | Export to Mermaid |
+| `C` | Clear diagram |
 | `?` | Help |
 | `Ctrl+c` | Quit |
 
-## Export to Mermaid
+## Mermaid
 
-Press `m` to export the diagram to `diagram.mmd` in Mermaid format.
+### Export
 
-### Import from Mermaid
+Press `M` to export the diagram to `diagram.mmd`.
+
+### Import
 
 ```
 tuigram --import diagram.mmd
 ```
-
-## Roadmap
-
-- Scrolling
