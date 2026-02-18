@@ -1557,7 +1557,9 @@ dependencies = [
 
 [[package]]
 name = "tui-world"
-version = "0.1.2"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5289872dff1fd444c6d70a2d0f2f4a28815f4bbe9bf8cac950223a3d57fcd4a5"
 dependencies = [
  "crossterm 0.29.0",
  "ratatui",
@@ -1565,7 +1567,7 @@ dependencies = [
 
 [[package]]
 name = "tuigram"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
