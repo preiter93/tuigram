@@ -162,35 +162,29 @@ Sleep 300ms
 Enter
 Sleep 1.5s
 
-# Navigate through events with j/k
-Type "j"
+# Clear selection and select first participant
+Escape
 Sleep 400ms
 Type "j"
 Sleep 400ms
 Type "j"
 Sleep 400ms
-Type "k"
+Type "j"
 Sleep 400ms
 
-# Navigate through participants with h/l
-Type "l"
-Sleep 400ms
-Type "l"
-Sleep 400ms
-Type "l"
-Sleep 400ms
-Type "h"
-Sleep 400ms
-
-# Move a participant with H/L
-Type "L"
-Sleep 500ms
+# Move participant with H/L
 Type "H"
 Sleep 500ms
+Type "L"
+Sleep 500ms
 
-# Select an event and move it with J/K
+# Navigate to an event
 Type "j"
 Sleep 400ms
+Type "j"
+Sleep 400ms
+
+# Move event with J/K
 Type "J"
 Sleep 500ms
 Type "K"
