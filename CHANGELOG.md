@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-02-18
+
+### 🚀 Features
+
+- *(nix)* Add nix flake for installation
+- *(ui)* Set event arrow direction with H / L
+- *(keybindings)* Make j/k navigate through participants
+- *(help)* Shorten keys
+- *(scroll)* Add scrolling of events
+- *(scroll)* Add scrollbar
+- *(scroll)* Show scroll inidicators oon lifelines
+- *(selection)* Select new event after it is added
+- *(help)* Show keys compactly formatted
+
+### 🐛 Bug Fixes
+
+- *(lint)* Satisfy clippy
+- *(selection)* Select participant first if nothing is selected
+- *(lint)* Satisfy clippy
+
+### 📚 Documentation
+
+- *(readme)* Add Homebrew installation instructions
+- *(readme)* Make installation section collapsible
+- *(demo)* Update demo tape and gif
+- *(readme)* Update readme with newest changes
+- *(readme)* Minimize installation instructions
+
+### 🔧 Refactor
+
+- *(render)* Simplify render code
+- *(keybindings)* Simplify selection navigation
+- *(render)* Pass world to render functions
+- *(scroll)* Move constants to common mod
+- *(imports)* Remove unused import
+- *(keys)* Use uppercase keys for major action
+
+### ⚙️ Miscellaneous Tasks
+
+- *(nix)* Add flake.lock
+
 ## [0.1.1] - 2026-02-16
 
 ### 🚀 Features
