@@ -12,8 +12,8 @@ use crate::{
     core::{Event, SequenceDiagram},
     theme::Theme,
     ui::{
-        EditorState, Selection,
-        scroll::{FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, MESSAGE_SPACING, ScrollState},
+        EditorState, FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, MESSAGE_SPACING, Selection,
+        scroll::ScrollState,
     },
 };
 

@@ -1,11 +1,6 @@
+use crate::ui::HEADER_HEIGHT;
+use crate::ui::MESSAGE_SPACING;
 use ratatui::widgets::ScrollbarState;
-
-/// Height of the participant header area
-pub const HEADER_HEIGHT: u16 = 3;
-/// Vertical spacing between messages
-pub const MESSAGE_SPACING: u16 = 3;
-/// Offset from lifeline start to first message
-pub const FIRST_MESSAGE_OFFSET: u16 = 2;
 
 pub struct ScrollState {
     /// Index of the first visible event
@@ -23,7 +18,7 @@ impl ScrollState {
     }
 
     pub fn set_viewport(&mut self, height: u16) {
-        self.viewport_height = height.saturating_sub(HEADER_HEIGHT + FIRST_MESSAGE_OFFSET);
+        self.viewport_height = height.saturating_sub(HEADER_HEIGHT);
     }
 
     pub fn ensure_visible(&mut self, index: usize) {
