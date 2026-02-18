@@ -310,6 +310,8 @@ fn input_mode_keybindings(world: &mut World) {
                         world
                             .get_mut::<SequenceDiagram>()
                             .add_message(from, to, text);
+                        let event_idx = world.get::<SequenceDiagram>().event_count() - 1;
+                        world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
                     }
                     world.get_mut::<EditorState>().reset();
                 }
