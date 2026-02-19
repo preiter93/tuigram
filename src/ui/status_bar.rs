@@ -25,6 +25,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         EditorMode::SelectFrom => ("SELECT FROM", theme.status_select),
         EditorMode::SelectTo => ("SELECT TO", theme.status_select),
         EditorMode::Help => ("HELP", theme.status_help),
+        EditorMode::ConfirmClear => ("CONFIRM", theme.status_select),
     };
 
     let hints = match mode {
@@ -44,6 +45,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         EditorMode::InputParticipant | EditorMode::InputMessage => "Enter: confirm  Esc: cancel",
         EditorMode::SelectFrom | EditorMode::SelectTo => "↑↓: navigate  Enter: select  Esc: cancel",
         EditorMode::Help => "?: close",
+        EditorMode::ConfirmClear => "y/Enter: confirm  n/Esc: cancel",
     };
 
     let mut spans = vec![

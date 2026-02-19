@@ -5,8 +5,8 @@ use crate::{
     render::render_sequence,
     theme::Theme,
     ui::{
-        EditorMode, EditorState, Selection, help::render_help, input::render_input_popup,
-        scroll::ScrollState, status_bar::render_status_bar,
+        EditorMode, EditorState, Selection, confirm::render_confirm_dialog, help::render_help,
+        input::render_input_popup, scroll::ScrollState, status_bar::render_status_bar,
     },
 };
 use ratatui::{
@@ -22,6 +22,7 @@ use tui_world::{KeyBinding, Keybindings, WidgetId, World};
 
 pub const GLOBAL: WidgetId = WidgetId("Global");
 pub const INPUT_MODE: WidgetId = WidgetId("InputMode");
+pub const CONFIRM_MODE: WidgetId = WidgetId("ConfirmMode");
 
 #[derive(Default)]
 pub struct AppState {
@@ -38,6 +39,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram) {
 
     global_keybindings(world);
     input_mode_keybindings(world);
+    confirm_mode_keybindings(world);
 }
 
 fn global_keybindings(world: &mut World) {
@@ -230,9 +232,7 @@ fn global_keybindings(world: &mut World) {
     kb.bind(GLOBAL, 'C', "Clear diagram", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
-            let diagram = world.get_mut::<SequenceDiagram>();
-            diagram.participants.clear();
-            diagram.events.clear();
+            world.get_mut::<EditorState>().mode = EditorMode::ConfirmClear;
         }
     });
 
@@ -456,6 +456,21 @@ fn input_mode_keybindings(world: &mut World) {
     });
 }
 
+fn confirm_mode_keybindings(world: &mut World) {
+    let kb = world.get_mut::<Keybindings>();
+
+    kb.bind_many(CONFIRM_MODE, keys!['y', KeyCode::Enter], "Yes", |world| {
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.participants.clear();
+        diagram.events.clear();
+        world.get_mut::<EditorState>().reset();
+    });
+
+    kb.bind_many(CONFIRM_MODE, keys!['n', KeyCode::Esc], "No", |world| {
+        world.get_mut::<EditorState>().reset();
+    });
+}
+
 #[allow(
     clippy::cast_possible_wrap,
     clippy::cast_possible_truncation,
@@ -482,6 +497,7 @@ pub fn active_widgets(world: &World) -> Vec<WidgetId> {
     let mode = world.get::<EditorState>().mode.clone();
     match mode {
         EditorMode::Normal | EditorMode::Help => vec![GLOBAL],
+        EditorMode::ConfirmClear => vec![CONFIRM_MODE],
         _ => vec![INPUT_MODE],
     }
 }
@@ -517,6 +533,9 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         EditorMode::Help => {
             let active = vec![GLOBAL];
             render_help(frame, area, theme, keybindings, &active);
+        }
+        EditorMode::ConfirmClear => {
+            render_confirm_dialog(frame, world);
         }
         EditorMode::Normal => {}
     }

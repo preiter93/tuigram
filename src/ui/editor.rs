@@ -10,6 +10,7 @@ pub enum EditorMode {
     SelectTo,
     InputMessage,
     Help,
+    ConfirmClear,
 }
 
 #[derive(Clone)]

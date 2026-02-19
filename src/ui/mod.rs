@@ -1,3 +1,4 @@
+pub mod confirm;
 mod editor;
 pub mod help;
 pub mod input;
