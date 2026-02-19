@@ -43,8 +43,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
                 "p: participant  e: event  ?: help  Ctrl+c: quit"
             }
         }
-        EditorMode::InputParticipant | EditorMode::InputMessage => "Enter: confirm  Esc: cancel",
-        EditorMode::EditMessage => "Enter: confirm  Esc: cancel  p: change participants",
+        EditorMode::InputParticipant | EditorMode::InputMessage | EditorMode::EditMessage => {
+            "Enter: confirm  Esc: cancel"
+        }
         EditorMode::SelectFrom
         | EditorMode::SelectTo
         | EditorMode::EditSelectFrom

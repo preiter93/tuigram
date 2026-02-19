@@ -14,13 +14,9 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
 
-    let (title, prompt, show_participants_hint) = match &editor.mode {
-        EditorMode::InputParticipant => (
-            "Add Participant".to_string(),
-            Some("Name:".to_string()),
-            false,
-        ),
-        EditorMode::InputMessage => {
+    let (title, prompt) = match &editor.mode {
+        EditorMode::InputParticipant => ("Add Participant".to_string(), Some("Name:".to_string())),
+        EditorMode::InputMessage | EditorMode::EditMessage => {
             let from_name = editor
                 .message_from
                 .and_then(|i| diagram.participants.get(i))
@@ -29,13 +25,13 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
                 .message_to
                 .and_then(|i| diagram.participants.get(i))
                 .map_or("?", String::as_str);
-            (
-                "Message".to_string(),
-                Some(format!("{from_name} → {to_name}:")),
-                false,
-            )
+            let title = if editor.mode == EditorMode::EditMessage {
+                "Edit Message"
+            } else {
+                "Message"
+            };
+            (title.to_string(), Some(format!("{from_name} → {to_name}:")))
         }
-        EditorMode::EditMessage => ("Edit Message".to_string(), None, true),
         _ => return,
     };
 
@@ -90,11 +86,7 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
         width: inner.width.saturating_sub(padding * 2),
         height: 1,
     };
-    let hint_text = if show_participants_hint {
-        "Enter: confirm | Esc: cancel | p: participants"
-    } else {
-        "Enter: confirm | Esc: cancel"
-    };
+    let hint_text = "Enter: confirm | Esc: cancel";
     frame.render_widget(
         Paragraph::new(hint_text)
             .style(theme.muted)

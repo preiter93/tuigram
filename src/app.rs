@@ -158,24 +158,21 @@ fn global_keybindings(world: &mut World) {
             return;
         }
 
-        let diagram = world.get::<SequenceDiagram>();
-        let participant_count = diagram.participant_count();
-        let event_count = diagram.event_count();
+        let participant_count = world.get::<SequenceDiagram>().participant_count();
         let editor = world.get::<EditorState>();
         let selection = editor.selection;
         let last_participant = editor.last_participant_index;
 
         // When going up from first event, restore last participant
-        if let Selection::Event(0) = selection {
-            if let Some(idx) = last_participant {
-                if idx < participant_count {
-                    world.get_mut::<EditorState>().selection = Selection::Participant(idx);
-                    return;
-                }
-            }
+        if let Selection::Event(0) = selection
+            && let Some(idx) = last_participant
+            && idx < participant_count
+        {
+            world.get_mut::<EditorState>().selection = Selection::Participant(idx);
+            return;
         }
 
-        world.get_mut::<EditorState>().selection = selection.up(participant_count, event_count);
+        world.get_mut::<EditorState>().selection = selection.up(participant_count);
     });
 
     kb.bind(
@@ -327,11 +324,35 @@ fn global_keybindings(world: &mut World) {
                     editor.message_from = Some(from);
                     editor.message_to = Some(to);
                     editor.input_buffer = text;
-                    editor.mode = EditorMode::EditMessage;
+                    editor.selected_index = from;
+                    editor.mode = EditorMode::EditSelectFrom;
                 }
             }
         },
     );
+
+    kb.bind(GLOBAL, 'r', "Rename event", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let selection = world.get::<EditorState>().selection;
+        if let Selection::Event(idx) = selection {
+            let event_data = {
+                let diagram = world.get::<SequenceDiagram>();
+                diagram.events.get(idx).cloned()
+            };
+            if let Some(Event::Message { from, to, text }) = event_data {
+                let editor = world.get_mut::<EditorState>();
+                editor.editing_event_index = Some(idx);
+                editor.message_from = Some(from);
+                editor.message_to = Some(to);
+                editor.input_buffer = text;
+                editor.mode = EditorMode::EditMessage;
+            }
+        }
+    });
 }
 
 fn input_mode_keybindings(world: &mut World) {
@@ -352,18 +373,6 @@ fn input_mode_keybindings(world: &mut World) {
             world.get_mut::<EditorState>().reset();
         },
     );
-
-    kb.bind(INPUT_MODE, 'p', "Change participants", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode == EditorMode::EditMessage {
-            let editor = world.get_mut::<EditorState>();
-            let from_idx = editor.message_from.unwrap_or(0);
-            editor.selected_index = from_idx;
-            editor.mode = EditorMode::EditSelectFrom;
-        } else if mode.is_text_input() {
-            world.get_mut::<EditorState>().input_buffer.push('p');
-        }
-    });
 
     kb.bind(
         INPUT_MODE,
@@ -528,7 +537,7 @@ fn handle_input_confirm(world: &mut World) {
             }
             world.get_mut::<EditorState>().reset();
         }
-        EditorMode::EditMessage | EditorMode::EditSelectTo => {
+        EditorMode::EditMessage => {
             save_event_changes(world);
         }
         EditorMode::EditSelectFrom => {
@@ -537,6 +546,12 @@ fn handle_input_confirm(world: &mut World) {
             editor.message_from = Some(selected);
             editor.mode = EditorMode::EditSelectTo;
             editor.selected_index = editor.message_to.unwrap_or(selected);
+        }
+        EditorMode::EditSelectTo => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.message_to = Some(selected);
+            editor.mode = EditorMode::EditMessage;
         }
         _ => {}
     }
@@ -547,24 +562,18 @@ fn save_event_changes(world: &mut World) {
     let text = editor_state.input_buffer.trim().to_string();
     if let Some(idx) = editor_state.editing_event_index
         && let (Some(from), Some(to)) = (editor_state.message_from, editor_state.message_to)
+        && !text.is_empty()
     {
-        let to = if editor_state.mode == EditorMode::EditSelectTo {
-            editor_state.selected_index
-        } else {
-            to
-        };
-        if !text.is_empty() {
-            let diagram = world.get_mut::<SequenceDiagram>();
-            if let Some(Event::Message {
-                from: f,
-                to: t,
-                text: txt,
-            }) = diagram.events.get_mut(idx)
-            {
-                *f = from;
-                *t = to;
-                *txt = text;
-            }
+        let diagram = world.get_mut::<SequenceDiagram>();
+        if let Some(Event::Message {
+            from: f,
+            to: t,
+            text: txt,
+        }) = diagram.events.get_mut(idx)
+        {
+            *f = from;
+            *t = to;
+            *txt = text;
         }
     }
     world.get_mut::<EditorState>().reset();
