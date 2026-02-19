@@ -9,8 +9,31 @@ pub enum EditorMode {
     SelectFrom,
     SelectTo,
     InputMessage,
+    EditMessage,
+    EditSelectFrom,
+    EditSelectTo,
     Help,
     ConfirmClear,
+}
+
+impl EditorMode {
+    pub fn is_selecting_participant(&self) -> bool {
+        matches!(
+            self,
+            Self::SelectFrom | Self::SelectTo | Self::EditSelectFrom | Self::EditSelectTo
+        )
+    }
+
+    pub fn is_selecting_from(&self) -> bool {
+        matches!(self, Self::SelectFrom | Self::EditSelectFrom)
+    }
+
+    pub fn is_text_input(&self) -> bool {
+        matches!(
+            self,
+            Self::InputParticipant | Self::InputMessage | Self::EditMessage
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -28,6 +51,7 @@ pub struct EditorState {
     pub message_to: Option<usize>,
     pub status_message: Option<StatusMessage>,
     pub selection: Selection,
+    pub editing_event_index: Option<usize>,
 }
 
 impl EditorState {
@@ -42,6 +66,7 @@ impl EditorState {
         self.message_from = None;
         self.message_to = None;
         self.status_message = None;
+        self.editing_event_index = None;
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

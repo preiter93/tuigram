@@ -22,8 +22,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
     let (mode_text, mode_style) = match mode {
         EditorMode::Normal => ("NORMAL", theme.status_normal),
         EditorMode::InputParticipant | EditorMode::InputMessage => ("INPUT", theme.status_input),
-        EditorMode::SelectFrom => ("SELECT FROM", theme.status_select),
-        EditorMode::SelectTo => ("SELECT TO", theme.status_select),
+        EditorMode::SelectFrom | EditorMode::EditSelectFrom => ("SELECT FROM", theme.status_select),
+        EditorMode::SelectTo | EditorMode::EditSelectTo => ("SELECT TO", theme.status_select),
+        EditorMode::EditMessage => ("EDIT", theme.status_input),
         EditorMode::Help => ("HELP", theme.status_help),
         EditorMode::ConfirmClear => ("CONFIRM", theme.status_select),
     };
@@ -43,7 +44,11 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
             }
         }
         EditorMode::InputParticipant | EditorMode::InputMessage => "Enter: confirm  Esc: cancel",
-        EditorMode::SelectFrom | EditorMode::SelectTo => "↑↓: navigate  Enter: select  Esc: cancel",
+        EditorMode::EditMessage => "Enter: confirm  Esc: cancel  p: change participants",
+        EditorMode::SelectFrom
+        | EditorMode::SelectTo
+        | EditorMode::EditSelectFrom
+        | EditorMode::EditSelectTo => "↑↓: navigate  Enter: select  Esc: cancel",
         EditorMode::Help => "?: close",
         EditorMode::ConfirmClear => "y/Enter: confirm  n/Esc: cancel",
     };

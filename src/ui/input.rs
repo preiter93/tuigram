@@ -14,8 +14,12 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
 
-    let (title, prompt) = match &editor.mode {
-        EditorMode::InputParticipant => ("Add Participant".to_string(), "Name:".to_string()),
+    let (title, prompt, show_participants_hint) = match &editor.mode {
+        EditorMode::InputParticipant => (
+            "Add Participant".to_string(),
+            Some("Name:".to_string()),
+            false,
+        ),
         EditorMode::InputMessage => {
             let from_name = editor
                 .message_from
@@ -25,8 +29,13 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
                 .message_to
                 .and_then(|i| diagram.participants.get(i))
                 .map_or("?", String::as_str);
-            ("Message".to_string(), format!("{from_name} → {to_name}:"))
+            (
+                "Message".to_string(),
+                Some(format!("{from_name} → {to_name}:")),
+                false,
+            )
         }
+        EditorMode::EditMessage => ("Edit Message".to_string(), None, true),
         _ => return,
     };
 
@@ -34,7 +43,7 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
     let area = frame.area();
 
     let popup_width = 50.min(area.width.saturating_sub(4));
-    let popup_height = 5;
+    let popup_height = if prompt.is_some() { 5 } else { 4 };
 
     let popup_area = centered_rect(popup_width, popup_height, area);
 
@@ -48,18 +57,24 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    let prompt_area = Rect {
-        x: inner.x,
-        y: inner.y,
-        width: inner.width,
-        height: 1,
-    };
-    frame.render_widget(Paragraph::new(prompt).style(theme.muted), prompt_area);
+    let padding = 1u16;
+    let mut input_y = inner.y;
+
+    if let Some(prompt_text) = prompt {
+        let prompt_area = Rect {
+            x: inner.x + padding,
+            y: inner.y,
+            width: inner.width.saturating_sub(padding * 2),
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(prompt_text).style(theme.muted), prompt_area);
+        input_y = inner.y + 1;
+    }
 
     let input_area = Rect {
-        x: inner.x,
-        y: inner.y + 1,
-        width: inner.width,
+        x: inner.x + padding,
+        y: input_y,
+        width: inner.width.saturating_sub(padding * 2),
         height: 1,
     };
 
@@ -70,13 +85,18 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
     frame.render_widget(Paragraph::new(input_line), input_area);
 
     let hint_area = Rect {
-        x: inner.x,
-        y: inner.y + 2,
-        width: inner.width,
+        x: inner.x + padding,
+        y: input_y + 1,
+        width: inner.width.saturating_sub(padding * 2),
         height: 1,
     };
+    let hint_text = if show_participants_hint {
+        "Enter: confirm | Esc: cancel | p: participants"
+    } else {
+        "Enter: confirm | Esc: cancel"
+    };
     frame.render_widget(
-        Paragraph::new("Enter: confirm | Esc: cancel")
+        Paragraph::new(hint_text)
             .style(theme.muted)
             .alignment(Alignment::Right),
         hint_area,

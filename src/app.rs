@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_lines)]
 
 use crate::{
-    core::SequenceDiagram,
+    core::{Event, SequenceDiagram},
     render::render_sequence,
     theme::Theme,
     ui::{
@@ -269,6 +269,34 @@ fn global_keybindings(world: &mut World) {
             editor.reset();
         }
     });
+
+    kb.bind(
+        GLOBAL,
+        KeyBinding::key(KeyCode::Enter),
+        "Edit event",
+        |world| {
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode != EditorMode::Normal {
+                return;
+            }
+
+            let selection = world.get::<EditorState>().selection;
+            if let Selection::Event(idx) = selection {
+                let event_data = {
+                    let diagram = world.get::<SequenceDiagram>();
+                    diagram.events.get(idx).cloned()
+                };
+                if let Some(Event::Message { from, to, text }) = event_data {
+                    let editor = world.get_mut::<EditorState>();
+                    editor.editing_event_index = Some(idx);
+                    editor.message_from = Some(from);
+                    editor.message_to = Some(to);
+                    editor.input_buffer = text;
+                    editor.mode = EditorMode::EditMessage;
+                }
+            }
+        },
+    );
 }
 
 fn input_mode_keybindings(world: &mut World) {
@@ -278,48 +306,7 @@ fn input_mode_keybindings(world: &mut World) {
         INPUT_MODE,
         KeyBinding::key(KeyCode::Enter),
         "Confirm",
-        |world| {
-            let mode = world.get::<EditorState>().mode.clone();
-            match mode {
-                EditorMode::InputParticipant => {
-                    let name = world.get::<EditorState>().input_buffer.trim().to_string();
-                    if !name.is_empty() {
-                        world.get_mut::<SequenceDiagram>().add_participant(name);
-                    }
-                    world.get_mut::<EditorState>().reset();
-                }
-                EditorMode::SelectFrom => {
-                    let selected = world.get::<EditorState>().selected_index;
-                    let editor = world.get_mut::<EditorState>();
-                    editor.message_from = Some(selected);
-                    editor.mode = EditorMode::SelectTo;
-                    editor.selected_index = selected;
-                }
-                EditorMode::SelectTo => {
-                    let selected = world.get::<EditorState>().selected_index;
-                    let editor = world.get_mut::<EditorState>();
-                    editor.message_to = Some(selected);
-                    editor.mode = EditorMode::InputMessage;
-                    editor.input_buffer.clear();
-                }
-                EditorMode::InputMessage => {
-                    let editor_state = world.get::<EditorState>().clone();
-                    let text = editor_state.input_buffer.trim().to_string();
-                    if !text.is_empty()
-                        && let (Some(from), Some(to)) =
-                            (editor_state.message_from, editor_state.message_to)
-                    {
-                        world
-                            .get_mut::<SequenceDiagram>()
-                            .add_message(from, to, text);
-                        let event_idx = world.get::<SequenceDiagram>().event_count() - 1;
-                        world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
-                    }
-                    world.get_mut::<EditorState>().reset();
-                }
-                _ => {}
-            }
-        },
+        handle_input_confirm,
     );
 
     kb.bind(
@@ -331,16 +318,25 @@ fn input_mode_keybindings(world: &mut World) {
         },
     );
 
+    kb.bind(INPUT_MODE, 'p', "Change participants", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::EditMessage {
+            let editor = world.get_mut::<EditorState>();
+            let from_idx = editor.message_from.unwrap_or(0);
+            editor.selected_index = from_idx;
+            editor.mode = EditorMode::EditSelectFrom;
+        } else if mode.is_text_input() {
+            world.get_mut::<EditorState>().input_buffer.push('p');
+        }
+    });
+
     kb.bind(
         INPUT_MODE,
         KeyBinding::key(KeyCode::Backspace),
         "Delete",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
-            if matches!(
-                mode,
-                EditorMode::InputParticipant | EditorMode::InputMessage
-            ) {
+            if mode.is_text_input() {
                 world.get_mut::<EditorState>().input_buffer.pop();
             }
         },
@@ -379,48 +375,36 @@ fn input_mode_keybindings(world: &mut World) {
 
     kb.bind(INPUT_MODE, 'k', "Up", |world| {
         let mode = world.get::<EditorState>().mode.clone();
-        if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
+        if mode.is_selecting_participant() {
             handle_input_mode_nav(world, -1);
-        } else if matches!(
-            mode,
-            EditorMode::InputParticipant | EditorMode::InputMessage
-        ) {
+        } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('k');
         }
     });
 
     kb.bind(INPUT_MODE, 'j', "Down", |world| {
         let mode = world.get::<EditorState>().mode.clone();
-        if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
+        if mode.is_selecting_participant() {
             handle_input_mode_nav(world, 1);
-        } else if matches!(
-            mode,
-            EditorMode::InputParticipant | EditorMode::InputMessage
-        ) {
+        } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('j');
         }
     });
 
     kb.bind(INPUT_MODE, 'h', "Left", |world| {
         let mode = world.get::<EditorState>().mode.clone();
-        if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
+        if mode.is_selecting_participant() {
             handle_input_mode_nav(world, -1);
-        } else if matches!(
-            mode,
-            EditorMode::InputParticipant | EditorMode::InputMessage
-        ) {
+        } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('h');
         }
     });
 
     kb.bind(INPUT_MODE, 'l', "Right", |world| {
         let mode = world.get::<EditorState>().mode.clone();
-        if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
+        if mode.is_selecting_participant() {
             handle_input_mode_nav(world, 1);
-        } else if matches!(
-            mode,
-            EditorMode::InputParticipant | EditorMode::InputMessage
-        ) {
+        } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('l');
         }
     });
@@ -431,14 +415,11 @@ fn input_mode_keybindings(world: &mut World) {
             let participant_count = world.get::<SequenceDiagram>().participant_count();
             let num = digit.to_digit(10).unwrap() as usize;
 
-            if matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
+            if mode.is_selecting_participant() {
                 if num >= 1 && num <= participant_count {
                     world.get_mut::<EditorState>().selected_index = num - 1;
                 }
-            } else if matches!(
-                mode,
-                EditorMode::InputParticipant | EditorMode::InputMessage
-            ) {
+            } else if mode.is_text_input() {
                 world.get_mut::<EditorState>().input_buffer.push(digit);
             }
         });
@@ -446,10 +427,8 @@ fn input_mode_keybindings(world: &mut World) {
 
     kb.bind_any(INPUT_MODE, |world, key| {
         let mode = world.get::<EditorState>().mode.clone();
-        if matches!(
-            mode,
-            EditorMode::InputParticipant | EditorMode::InputMessage
-        ) && let KeyCode::Char(c) = key.code
+        if mode.is_text_input()
+            && let KeyCode::Char(c) = key.code
         {
             world.get_mut::<EditorState>().input_buffer.push(c);
         }
@@ -476,9 +455,89 @@ fn confirm_mode_keybindings(world: &mut World) {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
+fn handle_input_confirm(world: &mut World) {
+    let mode = world.get::<EditorState>().mode.clone();
+    match mode {
+        EditorMode::InputParticipant => {
+            let name = world.get::<EditorState>().input_buffer.trim().to_string();
+            if !name.is_empty() {
+                world.get_mut::<SequenceDiagram>().add_participant(name);
+            }
+            world.get_mut::<EditorState>().reset();
+        }
+        EditorMode::SelectFrom => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.message_from = Some(selected);
+            editor.mode = EditorMode::SelectTo;
+            editor.selected_index = selected;
+        }
+        EditorMode::SelectTo => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.message_to = Some(selected);
+            editor.mode = EditorMode::InputMessage;
+            editor.input_buffer.clear();
+        }
+        EditorMode::InputMessage => {
+            let editor_state = world.get::<EditorState>().clone();
+            let text = editor_state.input_buffer.trim().to_string();
+            if !text.is_empty()
+                && let (Some(from), Some(to)) = (editor_state.message_from, editor_state.message_to)
+            {
+                world
+                    .get_mut::<SequenceDiagram>()
+                    .add_message(from, to, text);
+                let event_idx = world.get::<SequenceDiagram>().event_count() - 1;
+                world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
+            }
+            world.get_mut::<EditorState>().reset();
+        }
+        EditorMode::EditMessage | EditorMode::EditSelectTo => {
+            save_event_changes(world);
+        }
+        EditorMode::EditSelectFrom => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.message_from = Some(selected);
+            editor.mode = EditorMode::EditSelectTo;
+            editor.selected_index = editor.message_to.unwrap_or(selected);
+        }
+        _ => {}
+    }
+}
+
+fn save_event_changes(world: &mut World) {
+    let editor_state = world.get::<EditorState>().clone();
+    let text = editor_state.input_buffer.trim().to_string();
+    if let Some(idx) = editor_state.editing_event_index
+        && let (Some(from), Some(to)) = (editor_state.message_from, editor_state.message_to)
+    {
+        let to = if editor_state.mode == EditorMode::EditSelectTo {
+            editor_state.selected_index
+        } else {
+            to
+        };
+        if !text.is_empty() {
+            let diagram = world.get_mut::<SequenceDiagram>();
+            if let Some(Event::Message {
+                from: f,
+                to: t,
+                text: txt,
+            }) = diagram.events.get_mut(idx)
+            {
+                *f = from;
+                *t = to;
+                *txt = text;
+            }
+        }
+    }
+    world.get_mut::<EditorState>().reset();
+}
+
 fn handle_input_mode_nav(world: &mut World, delta: i32) {
     let mode = world.get::<EditorState>().mode.clone();
-    if !matches!(mode, EditorMode::SelectFrom | EditorMode::SelectTo) {
+    if !mode.is_selecting_participant() {
         return;
     }
 
@@ -524,10 +583,13 @@ pub fn render(frame: &mut Frame, world: &mut World) {
     render_status_bar(frame, status_area, world);
 
     match &editor.mode {
-        EditorMode::InputParticipant | EditorMode::InputMessage => {
+        EditorMode::InputParticipant | EditorMode::InputMessage | EditorMode::EditMessage => {
             render_input_popup(frame, world);
         }
-        EditorMode::SelectFrom | EditorMode::SelectTo => {
+        EditorMode::SelectFrom
+        | EditorMode::SelectTo
+        | EditorMode::EditSelectFrom
+        | EditorMode::EditSelectTo => {
             render_dual_participant_selector(frame, area, world);
         }
         EditorMode::Help => {
@@ -612,7 +674,11 @@ fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World
     let participants = &diagram.participants;
     let from_idx = editor.message_from;
     let cursor = editor.selected_index;
-    let selecting_from = editor.mode == EditorMode::SelectFrom;
+    let selecting_from = editor.mode.is_selecting_from();
+    let is_edit_mode = matches!(
+        editor.mode,
+        EditorMode::EditSelectFrom | EditorMode::EditSelectTo
+    );
     let popup_width = 50.min(area.width.saturating_sub(4));
     let popup_height = (participants.len() as u16 + 4).min(area.height.saturating_sub(4));
 
@@ -638,7 +704,7 @@ fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World
 
         let y = inner.y + i as u16;
 
-        let from_selected = from_idx == Some(i);
+        let from_selected = from_idx == Some(i) && !is_edit_mode;
         let from_cursor = selecting_from && cursor == i;
         let from_prefix = if from_cursor || from_selected {
             "▶ "
