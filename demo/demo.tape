@@ -165,11 +165,11 @@ Sleep 1.5s
 # Clear selection and select first participant
 Escape
 Sleep 400ms
-Type "j"
+Type "l"
 Sleep 400ms
-Type "j"
+Type "l"
 Sleep 400ms
-Type "j"
+Type "l"
 Sleep 400ms
 
 # Move participant with H/L

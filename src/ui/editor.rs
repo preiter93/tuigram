@@ -52,6 +52,7 @@ pub struct EditorState {
     pub status_message: Option<StatusMessage>,
     pub selection: Selection,
     pub editing_event_index: Option<usize>,
+    pub last_participant_index: Option<usize>,
 }
 
 impl EditorState {
@@ -67,6 +68,7 @@ impl EditorState {
         self.message_to = None;
         self.status_message = None;
         self.editing_event_index = None;
+        // Note: don't reset last_participant_index - we want to remember it
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

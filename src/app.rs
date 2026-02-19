@@ -11,7 +11,7 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    crossterm::event::{KeyCode, KeyModifiers},
+    crossterm::event::KeyCode,
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -108,34 +108,8 @@ fn global_keybindings(world: &mut World) {
 
     kb.bind_many(
         GLOBAL,
-        keys!['j', 'l', KeyCode::Tab, KeyCode::Right, KeyCode::Down],
-        "Select Next",
-        |world| {
-            let mode = world.get::<EditorState>().mode.clone();
-            if mode != EditorMode::Normal {
-                return;
-            }
-
-            let diagram = world.get::<SequenceDiagram>();
-            let participant_count = diagram.participant_count();
-            let event_count = diagram.event_count();
-
-            let selection = world.get::<EditorState>().selection;
-            world.get_mut::<EditorState>().selection =
-                selection.next(participant_count, event_count);
-        },
-    );
-
-    kb.bind_many(
-        GLOBAL,
-        keys![
-            'k',
-            'h',
-            KeyBinding::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-            KeyCode::Left,
-            KeyCode::Up
-        ],
-        "Select Previous",
+        keys!['l', KeyCode::Right],
+        "Select Right",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
@@ -144,35 +118,96 @@ fn global_keybindings(world: &mut World) {
 
             let participant_count = world.get::<SequenceDiagram>().participant_count();
             let selection = world.get::<EditorState>().selection;
-            world.get_mut::<EditorState>().selection = selection.prev(participant_count);
+            world.get_mut::<EditorState>().selection = selection.right(participant_count);
         },
     );
 
-    kb.bind(GLOBAL, 'H', "Move participant left / Arrow left", |world| {
+    kb.bind_many(GLOBAL, keys!['h', KeyCode::Left], "Select Left", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode != EditorMode::Normal {
             return;
         }
 
+        let participant_count = world.get::<SequenceDiagram>().participant_count();
         let selection = world.get::<EditorState>().selection;
-        match selection {
-            Selection::Participant(idx) if idx > 0 => {
-                world
-                    .get_mut::<SequenceDiagram>()
-                    .swap_participants(idx, idx - 1);
-                world.get_mut::<EditorState>().selection = Selection::Participant(idx - 1);
-            }
-            Selection::Event(idx) => {
-                world.get_mut::<SequenceDiagram>().point_event_left(idx);
-            }
-            _ => {}
+        world.get_mut::<EditorState>().selection = selection.left(participant_count);
+    });
+
+    kb.bind_many(GLOBAL, keys!['j', KeyCode::Down], "Select Down", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
         }
+
+        let diagram = world.get::<SequenceDiagram>();
+        let participant_count = diagram.participant_count();
+        let event_count = diagram.event_count();
+        let selection = world.get::<EditorState>().selection;
+
+        // Remember participant index before moving to events
+        if let Selection::Participant(idx) = selection {
+            world.get_mut::<EditorState>().last_participant_index = Some(idx);
+        }
+
+        world.get_mut::<EditorState>().selection = selection.down(participant_count, event_count);
+    });
+
+    kb.bind_many(GLOBAL, keys!['k', KeyCode::Up], "Select Up", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
+
+        let diagram = world.get::<SequenceDiagram>();
+        let participant_count = diagram.participant_count();
+        let event_count = diagram.event_count();
+        let editor = world.get::<EditorState>();
+        let selection = editor.selection;
+        let last_participant = editor.last_participant_index;
+
+        // When going up from first event, restore last participant
+        if let Selection::Event(0) = selection {
+            if let Some(idx) = last_participant {
+                if idx < participant_count {
+                    world.get_mut::<EditorState>().selection = Selection::Participant(idx);
+                    return;
+                }
+            }
+        }
+
+        world.get_mut::<EditorState>().selection = selection.up(participant_count, event_count);
     });
 
     kb.bind(
         GLOBAL,
+        'H',
+        "Move participant left / Point arrow left",
+        |world| {
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode != EditorMode::Normal {
+                return;
+            }
+
+            let selection = world.get::<EditorState>().selection;
+            match selection {
+                Selection::Participant(idx) if idx > 0 => {
+                    world
+                        .get_mut::<SequenceDiagram>()
+                        .swap_participants(idx, idx - 1);
+                    world.get_mut::<EditorState>().selection = Selection::Participant(idx - 1);
+                }
+                Selection::Event(idx) => {
+                    world.get_mut::<SequenceDiagram>().point_event_left(idx);
+                }
+                _ => {}
+            }
+        },
+    );
+
+    kb.bind(
+        GLOBAL,
         'L',
-        "Move participant right / Arrow right",
+        "Move participant right / Point arrow right",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
