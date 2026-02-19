@@ -56,8 +56,8 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `j/k` or `↓/↑` | Navigate down/up (events) |
 | `H/L` | Move participant left/right, reverse event arrow |
 | `J/K` | Move event up/down |
-| `Enter` | Edit selected event |
-| `r` | Rename event message |
+| `Enter` | Edit selected |
+| `r` | Rename selected |
 | `d` | Delete selected |
 | `M` | Export to Mermaid |
 | `C` | Clear diagram |

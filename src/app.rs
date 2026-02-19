@@ -305,18 +305,15 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(
-        GLOBAL,
-        KeyBinding::key(KeyCode::Enter),
-        "Edit event",
-        |world| {
-            let mode = world.get::<EditorState>().mode.clone();
-            if mode != EditorMode::Normal {
-                return;
-            }
+    kb.bind(GLOBAL, KeyBinding::key(KeyCode::Enter), "Edit", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode != EditorMode::Normal {
+            return;
+        }
 
-            let selection = world.get::<EditorState>().selection;
-            if let Selection::Event(idx) = selection {
+        let selection = world.get::<EditorState>().selection;
+        match selection {
+            Selection::Event(idx) => {
                 let event_data = {
                     let diagram = world.get::<SequenceDiagram>();
                     diagram.events.get(idx).cloned()
@@ -331,29 +328,57 @@ fn global_keybindings(world: &mut World) {
                     editor.mode = EditorMode::EditSelectFrom;
                 }
             }
-        },
-    );
+            Selection::Participant(idx) => {
+                let name = {
+                    let diagram = world.get::<SequenceDiagram>();
+                    diagram.participants.get(idx).cloned()
+                };
+                if let Some(name) = name {
+                    let editor = world.get_mut::<EditorState>();
+                    editor.selected_index = idx;
+                    editor.input_buffer = name;
+                    editor.mode = EditorMode::RenameParticipant;
+                }
+            }
+            Selection::None => {}
+        }
+    });
 
-    kb.bind(GLOBAL, 'r', "Rename event", |world| {
+    kb.bind(GLOBAL, 'r', "Rename", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode != EditorMode::Normal {
             return;
         }
 
         let selection = world.get::<EditorState>().selection;
-        if let Selection::Event(idx) = selection {
-            let event_data = {
-                let diagram = world.get::<SequenceDiagram>();
-                diagram.events.get(idx).cloned()
-            };
-            if let Some(Event::Message { from, to, text }) = event_data {
-                let editor = world.get_mut::<EditorState>();
-                editor.editing_event_index = Some(idx);
-                editor.message_from = Some(from);
-                editor.message_to = Some(to);
-                editor.input_buffer = text;
-                editor.mode = EditorMode::EditMessage;
+        match selection {
+            Selection::Event(idx) => {
+                let event_data = {
+                    let diagram = world.get::<SequenceDiagram>();
+                    diagram.events.get(idx).cloned()
+                };
+                if let Some(Event::Message { from, to, text }) = event_data {
+                    let editor = world.get_mut::<EditorState>();
+                    editor.editing_event_index = Some(idx);
+                    editor.message_from = Some(from);
+                    editor.message_to = Some(to);
+                    editor.input_buffer = text;
+                    editor.mode = EditorMode::EditMessage;
+                }
             }
+            Selection::Participant(idx) => {
+                let name = {
+                    let diagram = world.get::<SequenceDiagram>();
+                    diagram.participants.get(idx).cloned()
+                };
+                if let Some(name) = name {
+                    let editor = world.get_mut::<EditorState>();
+                    editor.selected_index = idx;
+                    editor.input_buffer = name;
+                    editor.mode = EditorMode::RenameParticipant;
+                }
+            }
+            Selection::None => {}
         }
     });
 }
@@ -556,6 +581,18 @@ fn handle_input_confirm(world: &mut World) {
             editor.message_to = Some(selected);
             editor.mode = EditorMode::EditMessage;
         }
+        EditorMode::RenameParticipant => {
+            let editor_state = world.get::<EditorState>();
+            let name = editor_state.input_buffer.trim().to_string();
+            let idx = editor_state.selected_index;
+            if !name.is_empty() {
+                let diagram = world.get_mut::<SequenceDiagram>();
+                if let Some(participant) = diagram.participants.get_mut(idx) {
+                    *participant = name;
+                }
+            }
+            world.get_mut::<EditorState>().reset();
+        }
         _ => {}
     }
 }
@@ -635,7 +672,10 @@ pub fn render(frame: &mut Frame, world: &mut World) {
     render_status_bar(frame, status_area, world);
 
     match &editor.mode {
-        EditorMode::InputParticipant | EditorMode::InputMessage | EditorMode::EditMessage => {
+        EditorMode::InputParticipant
+        | EditorMode::InputMessage
+        | EditorMode::EditMessage
+        | EditorMode::RenameParticipant => {
             render_input_popup(frame, world);
         }
         EditorMode::SelectFrom

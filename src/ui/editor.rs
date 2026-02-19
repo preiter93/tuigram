@@ -12,6 +12,7 @@ pub enum EditorMode {
     EditMessage,
     EditSelectFrom,
     EditSelectTo,
+    RenameParticipant,
     Help,
     ConfirmClear,
 }
@@ -31,7 +32,10 @@ impl EditorMode {
     pub fn is_text_input(&self) -> bool {
         matches!(
             self,
-            Self::InputParticipant | Self::InputMessage | Self::EditMessage
+            Self::InputParticipant
+                | Self::InputMessage
+                | Self::EditMessage
+                | Self::RenameParticipant
         )
     }
 }

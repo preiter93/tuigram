@@ -16,6 +16,9 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
 
     let (title, prompt) = match &editor.mode {
         EditorMode::InputParticipant => ("Add Participant".to_string(), Some("Name:".to_string())),
+        EditorMode::RenameParticipant => {
+            ("Rename Participant".to_string(), Some("Name:".to_string()))
+        }
         EditorMode::InputMessage | EditorMode::EditMessage => {
             let from_name = editor
                 .message_from

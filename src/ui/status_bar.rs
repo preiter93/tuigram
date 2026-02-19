@@ -24,7 +24,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         EditorMode::InputParticipant | EditorMode::InputMessage => ("INPUT", theme.status_input),
         EditorMode::SelectFrom | EditorMode::EditSelectFrom => ("SELECT FROM", theme.status_select),
         EditorMode::SelectTo | EditorMode::EditSelectTo => ("SELECT TO", theme.status_select),
-        EditorMode::EditMessage => ("EDIT", theme.status_input),
+        EditorMode::EditMessage | EditorMode::RenameParticipant => ("EDIT", theme.status_input),
         EditorMode::Help => ("HELP", theme.status_help),
         EditorMode::ConfirmClear => ("CONFIRM", theme.status_select),
     };
@@ -43,9 +43,10 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
                 "p: participant  e: event  ?: help  Ctrl+c: quit"
             }
         }
-        EditorMode::InputParticipant | EditorMode::InputMessage | EditorMode::EditMessage => {
-            "Enter: confirm  Esc: cancel"
-        }
+        EditorMode::InputParticipant
+        | EditorMode::InputMessage
+        | EditorMode::EditMessage
+        | EditorMode::RenameParticipant => "Enter: confirm  Esc: cancel",
         EditorMode::SelectFrom
         | EditorMode::SelectTo
         | EditorMode::EditSelectFrom
