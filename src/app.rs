@@ -485,7 +485,7 @@ fn input_mode_keybindings(world: &mut World) {
 fn confirm_mode_keybindings(world: &mut World) {
     let kb = world.get_mut::<Keybindings>();
 
-    kb.bind_many(CONFIRM_MODE, keys!['y', KeyCode::Enter], "Yes", |world| {
+    kb.bind(CONFIRM_MODE, 'y', "Yes", |world| {
         let diagram = world.get_mut::<SequenceDiagram>();
         diagram.participants.clear();
         diagram.events.clear();
