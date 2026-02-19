@@ -535,6 +535,11 @@ fn save_event_changes(world: &mut World) {
     world.get_mut::<EditorState>().reset();
 }
 
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn handle_input_mode_nav(world: &mut World, delta: i32) {
     let mode = world.get::<EditorState>().mode.clone();
     if !mode.is_selecting_participant() {
