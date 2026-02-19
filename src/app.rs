@@ -106,7 +106,7 @@ fn global_keybindings(world: &mut World) {
 
     kb.bind_many(
         GLOBAL,
-        keys!['j', 'l', KeyCode::Tab],
+        keys!['j', 'l', KeyCode::Tab, KeyCode::Right, KeyCode::Down],
         "Select Next",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
@@ -129,7 +129,9 @@ fn global_keybindings(world: &mut World) {
         keys![
             'k',
             'h',
-            KeyBinding::new(KeyCode::BackTab, KeyModifiers::SHIFT)
+            KeyBinding::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            KeyCode::Left,
+            KeyCode::Up
         ],
         "Select Previous",
         |world| {

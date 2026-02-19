@@ -10,7 +10,7 @@ use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
 
-const HELP_WIDTH: u16 = 56;
+const HELP_WIDTH: u16 = 60;
 
 pub fn render_help(
     frame: &mut Frame,
@@ -26,7 +26,7 @@ pub fn render_help(
         .map(|info| {
             let keys = info.keys_display_compact();
             Line::from(vec![
-                Span::styled(format!("{keys:>14}"), theme.key),
+                Span::styled(format!("{keys:>18}"), theme.key),
                 Span::raw("  "),
                 Span::styled(info.name, theme.text),
             ])
