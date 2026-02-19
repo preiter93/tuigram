@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-02-19
+
+### 🚀 Features
+
+- *(navigation)* Add arrow key navigation
+- *(app)* Add confirmation dialog before clearing diagram
+- *(app)* Add event editing with Enter key
+- *(app)* Add r keybinding to rename event message
+- *(ui)* Make delete confirmation dialog clearer
+- *(app)* Add rename support for participants
+
+### 🐛 Bug Fixes
+
+- *(lint)* Satisfy clippy
+- *(clear)* Show confirmation dialog only if diagram exists
+
+### 📚 Documentation
+
+- *(readme)* Add badges
+- *(readme)* Center header
+- *(demo)* Update demo
+
+### 🔧 Refactor
+
+- *(keybindings)* Rework navigation
+
 ## [0.1.2] - 2026-02-18
 
 ### 🚀 Features
