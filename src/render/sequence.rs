@@ -300,46 +300,38 @@ fn render_note(
     match position {
         NotePosition::Right => {
             let box_x = start_x.saturating_add(2);
-            let box_area = Rect {
+            let area = Rect {
                 x: box_x,
                 y: y.saturating_sub(1),
                 width: box_width,
-                height: 3,
+                height: 1,
             };
 
-            f.render_widget(Clear, box_area);
-
-            let block = Block::default().borders(Borders::ALL).border_style(style);
-            let inner = block.inner(box_area);
-            f.render_widget(block, box_area);
+            f.render_widget(Clear, area);
 
             f.render_widget(
                 Paragraph::new(text)
                     .alignment(Alignment::Center)
-                    .style(style),
-                inner,
+                    .style(style.reversed()),
+                area,
             );
         }
         NotePosition::Left => {
             let box_x = start_x.saturating_sub(box_width + 1);
-            let box_area = Rect {
+            let area = Rect {
                 x: box_x,
                 y: y.saturating_sub(1),
                 width: box_width,
-                height: 3,
+                height: 1,
             };
 
-            f.render_widget(Clear, box_area);
-
-            let block = Block::default().borders(Borders::ALL).border_style(style);
-            let inner = block.inner(box_area);
-            f.render_widget(block, box_area);
+            f.render_widget(Clear, area);
 
             f.render_widget(
                 Paragraph::new(text)
                     .alignment(Alignment::Center)
-                    .style(style),
-                inner,
+                    .style(style.reversed()),
+                area,
             );
         }
         NotePosition::Over => {
@@ -353,25 +345,20 @@ fn render_note(
                 min_x.saturating_sub(over_box_width / 2)
             };
 
-            let box_area = Rect {
+            let area = Rect {
                 x: over_box_x,
                 y: y.saturating_sub(1),
                 width: over_box_width,
-                height: 3,
+                height: 1,
             };
 
-            f.render_widget(Clear, box_area);
-
-            let block = Block::default().borders(Borders::ALL).border_style(style);
-
-            let inner = block.inner(box_area);
-            f.render_widget(block, box_area);
+            f.render_widget(Clear, area);
 
             f.render_widget(
                 Paragraph::new(text)
                     .alignment(Alignment::Center)
-                    .style(style),
-                inner,
+                    .style(style.reversed()),
+                area,
             );
         }
     }
