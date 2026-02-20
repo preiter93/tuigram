@@ -11,7 +11,7 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    crossterm::event::KeyCode,
+    crossterm::event::{KeyCode, KeyModifiers},
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -245,10 +245,10 @@ fn global_keybindings(world: &mut World) {
         world.get_mut::<EditorState>().selection = selection.up(participant_count);
     });
 
-    kb.bind(
+    kb.bind_many(
         GLOBAL,
-        'H',
-        "Move participant left / Point arrow left",
+        keys!['H', KeyBinding::new(KeyCode::Left, KeyModifiers::SHIFT)],
+        "Move participant left",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
@@ -271,10 +271,10 @@ fn global_keybindings(world: &mut World) {
         },
     );
 
-    kb.bind(
+    kb.bind_many(
         GLOBAL,
-        'L',
-        "Move participant right / Point arrow right",
+        keys!['L', KeyBinding::new(KeyCode::Right, KeyModifiers::SHIFT)],
+        "Move participant right",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
@@ -300,36 +300,46 @@ fn global_keybindings(world: &mut World) {
         },
     );
 
-    kb.bind(GLOBAL, 'J', "Move event down", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
-
-        let selection = world.get::<EditorState>().selection;
-        if let Selection::Event(idx) = selection {
-            let event_count = world.get::<SequenceDiagram>().event_count();
-            if idx + 1 < event_count {
-                world.get_mut::<SequenceDiagram>().events.swap(idx, idx + 1);
-                world.get_mut::<EditorState>().selection = Selection::Event(idx + 1);
+    kb.bind_many(
+        GLOBAL,
+        keys!['J', KeyBinding::new(KeyCode::Down, KeyModifiers::SHIFT)],
+        "Move event down",
+        |world| {
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode != EditorMode::Normal {
+                return;
             }
-        }
-    });
 
-    kb.bind(GLOBAL, 'K', "Move event up", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
+            let selection = world.get::<EditorState>().selection;
+            if let Selection::Event(idx) = selection {
+                let event_count = world.get::<SequenceDiagram>().event_count();
+                if idx + 1 < event_count {
+                    world.get_mut::<SequenceDiagram>().events.swap(idx, idx + 1);
+                    world.get_mut::<EditorState>().selection = Selection::Event(idx + 1);
+                }
+            }
+        },
+    );
 
-        let selection = world.get::<EditorState>().selection;
-        if let Selection::Event(idx) = selection
-            && idx > 0
-        {
-            world.get_mut::<SequenceDiagram>().events.swap(idx, idx - 1);
-            world.get_mut::<EditorState>().selection = Selection::Event(idx - 1);
-        }
-    });
+    kb.bind_many(
+        GLOBAL,
+        keys!['K', KeyBinding::new(KeyCode::Up, KeyModifiers::SHIFT)],
+        "Move event up",
+        |world| {
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode != EditorMode::Normal {
+                return;
+            }
+
+            let selection = world.get::<EditorState>().selection;
+            if let Selection::Event(idx) = selection
+                && idx > 0
+            {
+                world.get_mut::<SequenceDiagram>().events.swap(idx, idx - 1);
+                world.get_mut::<EditorState>().selection = Selection::Event(idx - 1);
+            }
+        },
+    );
 
     kb.bind(GLOBAL, 'C', "Clear diagram", |world| {
         let mode = world.get::<EditorState>().mode.clone();
@@ -354,24 +364,6 @@ fn global_keybindings(world: &mut World) {
                     .get_mut::<EditorState>()
                     .set_status(format!("Export failed: {e}")),
             }
-        }
-    });
-
-    kb.bind(GLOBAL, '?', "Help", |world| {
-        let editor = world.get_mut::<EditorState>();
-        if editor.mode == EditorMode::Help {
-            editor.mode = EditorMode::Normal;
-        } else if editor.mode == EditorMode::Normal {
-            editor.mode = EditorMode::Help;
-        }
-    });
-
-    kb.bind(GLOBAL, KeyBinding::key(KeyCode::Esc), "Cancel", |world| {
-        let editor = world.get_mut::<EditorState>();
-        if editor.mode == EditorMode::Normal {
-            editor.clear_selection();
-        } else {
-            editor.reset();
         }
     });
 
@@ -484,6 +476,24 @@ fn global_keybindings(world: &mut World) {
                 }
             }
             Selection::None => {}
+        }
+    });
+
+    kb.bind(GLOBAL, '?', "Help", |world| {
+        let editor = world.get_mut::<EditorState>();
+        if editor.mode == EditorMode::Help {
+            editor.mode = EditorMode::Normal;
+        } else if editor.mode == EditorMode::Normal {
+            editor.mode = EditorMode::Help;
+        }
+    });
+
+    kb.bind(GLOBAL, KeyBinding::key(KeyCode::Esc), "Cancel", |world| {
+        let editor = world.get_mut::<EditorState>();
+        if editor.mode == EditorMode::Normal {
+            editor.clear_selection();
+        } else {
+            editor.reset();
         }
     });
 }
