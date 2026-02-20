@@ -46,3 +46,12 @@ pub enum Event {
         text: String,
     },
 }
+
+impl Event {
+    pub const fn height(&self) -> u16 {
+        match self {
+            Self::Message { .. } => 3,
+            Self::Note { .. } => 2,
+        }
+    }
+}

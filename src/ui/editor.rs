@@ -100,7 +100,6 @@ impl EditorState {
         self.note_position = NotePosition::default();
         self.note_participant_start = None;
         self.note_participant_end = None;
-        // Note: don't reset last_participant_index - we want to remember it
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

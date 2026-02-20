@@ -11,10 +11,7 @@ use tui_world::World;
 use crate::{
     core::{Event, NotePosition, SequenceDiagram},
     theme::Theme,
-    ui::{
-        EditorState, FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, MESSAGE_SPACING, Selection,
-        scroll::ScrollState,
-    },
+    ui::{EditorState, FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, Selection, scroll::ScrollState},
 };
 
 pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
@@ -24,7 +21,8 @@ pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
     world.get_mut::<ScrollState>().set_viewport(area.height);
 
     if let Selection::Event(idx) = selection {
-        world.get_mut::<ScrollState>().ensure_visible(idx);
+        let diagram = world.get::<SequenceDiagram>().clone();
+        world.get_mut::<ScrollState>().ensure_visible(idx, &diagram);
     }
 
     let theme = world.get::<Theme>();
@@ -44,9 +42,8 @@ pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
 fn render_scrollbar(f: &mut Frame, area: Rect, world: &World) {
     let diagram = world.get::<SequenceDiagram>();
     let scroll = world.get::<ScrollState>();
-    let event_count = diagram.event_count();
 
-    if !scroll.needs_scroll(event_count) {
+    if !scroll.needs_scroll(diagram) {
         return;
     }
 
@@ -57,7 +54,7 @@ fn render_scrollbar(f: &mut Frame, area: Rect, world: &World) {
         width: area.width,
         height: area.height.saturating_sub(HEADER_HEIGHT),
     };
-    let mut scrollbar_state = scroll.scrollbar_state(event_count);
+    let mut scrollbar_state = scroll.scrollbar_state(diagram);
     f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
@@ -114,7 +111,7 @@ fn render_lifelines(
     let theme = world.get::<Theme>();
     let event_count = diagram.event_count();
 
-    let visible_range = scroll.visible_range(event_count);
+    let visible_range = scroll.visible_range(diagram);
     let has_above = visible_range.start > 0;
     let has_below = visible_range.end < event_count;
 
@@ -164,16 +161,15 @@ fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_st
     let selection = world.get::<EditorState>().selection;
     let theme = world.get::<Theme>();
     let scroll = world.get::<ScrollState>();
-    let visible_range = scroll.visible_range(diagram.event_count());
-    let scroll_offset = scroll.offset;
+    let visible_range = scroll.visible_range(diagram);
 
-    for i in visible_range {
-        let Some(event) = diagram.events.get(i) else {
-            continue;
-        };
+    let base_y = lifeline_start + FIRST_MESSAGE_OFFSET;
+    let mut y = base_y;
 
-        let visible_index = i - scroll_offset;
-        let y = lifeline_start + FIRST_MESSAGE_OFFSET + (visible_index as u16 * MESSAGE_SPACING);
+    for (i, event) in diagram.events.iter().enumerate().skip(scroll.offset) {
+        if !visible_range.contains(&i) {
+            break;
+        }
 
         let style = if selection == Selection::Event(i) {
             theme.selected
@@ -203,6 +199,8 @@ fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_st
                 );
             }
         }
+
+        y += event.height();
     }
 }
 
@@ -293,73 +291,40 @@ fn render_note(
 ) {
     let start_x = participants[participant_start];
     let end_x = participants[participant_end];
-
     let text_width = text.len() as u16;
-    let box_width = text_width + 4;
 
-    match position {
-        NotePosition::Right => {
-            let box_x = start_x.saturating_add(2);
-            let area = Rect {
-                x: box_x,
-                y: y.saturating_sub(1),
-                width: box_width,
-                height: 1,
-            };
-
-            f.render_widget(Clear, area);
-
-            f.render_widget(
-                Paragraph::new(text)
-                    .alignment(Alignment::Center)
-                    .style(style.reversed()),
-                area,
-            );
-        }
+    let (x, width) = match position {
+        NotePosition::Right => (start_x.saturating_add(2), text_width + 4),
         NotePosition::Left => {
-            let box_x = start_x.saturating_sub(box_width + 1);
-            let area = Rect {
-                x: box_x,
-                y: y.saturating_sub(1),
-                width: box_width,
-                height: 1,
-            };
-
-            f.render_widget(Clear, area);
-
-            f.render_widget(
-                Paragraph::new(text)
-                    .alignment(Alignment::Center)
-                    .style(style.reversed()),
-                area,
-            );
+            let w = text_width + 4;
+            (start_x.saturating_sub(w + 1), w)
         }
         NotePosition::Over => {
             let min_x = start_x.min(end_x);
             let max_x = start_x.max(end_x);
-            let span_width = max_x.saturating_sub(min_x);
-            let over_box_width = span_width.max(text_width + 2) + 2;
-            let over_box_x = if span_width > 0 {
+            let span = max_x.saturating_sub(min_x);
+            let w = span.max(text_width + 2) + 2;
+            let x = if span > 0 {
                 min_x.saturating_sub(1)
             } else {
-                min_x.saturating_sub(over_box_width / 2)
+                min_x.saturating_sub(w / 2)
             };
-
-            let area = Rect {
-                x: over_box_x,
-                y: y.saturating_sub(1),
-                width: over_box_width,
-                height: 1,
-            };
-
-            f.render_widget(Clear, area);
-
-            f.render_widget(
-                Paragraph::new(text)
-                    .alignment(Alignment::Center)
-                    .style(style.reversed()),
-                area,
-            );
+            (x, w)
         }
-    }
+    };
+
+    let area = Rect {
+        x,
+        y: y.saturating_sub(1),
+        width,
+        height: 1,
+    };
+
+    f.render_widget(Clear, area);
+    f.render_widget(
+        Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .style(style.reversed()),
+        area,
+    );
 }
