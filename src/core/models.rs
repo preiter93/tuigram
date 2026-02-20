@@ -7,7 +7,7 @@ pub enum NotePosition {
 }
 
 impl NotePosition {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Right => "right of",
             Self::Left => "left of",
@@ -15,7 +15,7 @@ impl NotePosition {
         }
     }
 
-    pub fn next(&self) -> Self {
+    pub fn next(self) -> Self {
         match self {
             Self::Right => Self::Left,
             Self::Left => Self::Over,
@@ -23,7 +23,7 @@ impl NotePosition {
         }
     }
 
-    pub fn prev(&self) -> Self {
+    pub fn prev(self) -> Self {
         match self {
             Self::Right => Self::Over,
             Self::Left => Self::Right,
