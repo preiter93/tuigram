@@ -51,8 +51,8 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | Key | Action |
 |-----|--------|
 | `p` | Add participant |
-| `m` | Add message |
-| `n` | Add note |
+| `m/M` | Insert message after/before selected |
+| `n/N` | Insert note after/before selected |
 | `h/l` or `←/→` | Navigate left/right (participants) |
 | `j/k` or `↓/↑` | Navigate down/up (events) |
 | `H/L` | Move participant left/right, reverse event arrow |
@@ -60,7 +60,7 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `Enter` | Edit selected |
 | `r` | Rename selected |
 | `d` | Delete selected |
-| `M` | Export to Mermaid |
+| `E` | Export to Mermaid |
 | `C` | Clear diagram |
 | `?` | Help |
 | `Ctrl+c` | Quit |

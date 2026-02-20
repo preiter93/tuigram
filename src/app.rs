@@ -58,7 +58,7 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'm', "Add message", |world| {
+    kb.bind(GLOBAL, 'm', "Insert message after", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
             let participant_count = world.get::<SequenceDiagram>().participant_count();
@@ -78,7 +78,28 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'n', "Add note", |world| {
+    kb.bind(GLOBAL, 'M', "Insert message before", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::Normal {
+            let participant_count = world.get::<SequenceDiagram>().participant_count();
+            if participant_count >= 2 {
+                let selection = world.get::<EditorState>().selection;
+                let insert_after = match selection {
+                    Selection::Event(idx) if idx > 0 => Some(idx - 1),
+                    Selection::Event(0) => Some(usize::MAX), // marker for insert at start
+                    _ => None,
+                };
+                let editor = world.get_mut::<EditorState>();
+                editor.mode = EditorMode::SelectFrom;
+                editor.selected_index = 0;
+                editor.message_from = None;
+                editor.message_to = None;
+                editor.insert_after_index = insert_after;
+            }
+        }
+    });
+
+    kb.bind(GLOBAL, 'n', "Insert note after", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
             let participant_count = world.get::<SequenceDiagram>().participant_count();
@@ -86,6 +107,28 @@ fn global_keybindings(world: &mut World) {
                 let selection = world.get::<EditorState>().selection;
                 let insert_after = match selection {
                     Selection::Event(idx) => Some(idx),
+                    _ => None,
+                };
+                let editor = world.get_mut::<EditorState>();
+                editor.mode = EditorMode::SelectNoteParticipant;
+                editor.selected_index = 0;
+                editor.note_position = NotePosition::Right;
+                editor.note_participant_start = None;
+                editor.note_participant_end = None;
+                editor.insert_after_index = insert_after;
+            }
+        }
+    });
+
+    kb.bind(GLOBAL, 'N', "Insert note before", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::Normal {
+            let participant_count = world.get::<SequenceDiagram>().participant_count();
+            if participant_count >= 1 {
+                let selection = world.get::<EditorState>().selection;
+                let insert_after = match selection {
+                    Selection::Event(idx) if idx > 0 => Some(idx - 1),
+                    Selection::Event(0) => Some(usize::MAX),
                     _ => None,
                 };
                 let editor = world.get_mut::<EditorState>();
@@ -298,7 +341,7 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'M', "Export Mermaid", |world| {
+    kb.bind(GLOBAL, 'E', "Export Mermaid", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
             let diagram = world.get::<SequenceDiagram>();
@@ -656,12 +699,19 @@ fn handle_input_confirm(world: &mut World) {
                 && let (Some(from), Some(to)) = (editor_state.message_from, editor_state.message_to)
             {
                 let diagram = world.get_mut::<SequenceDiagram>();
-                let event_idx = if let Some(after_idx) = editor_state.insert_after_index {
-                    diagram.insert_message(after_idx, from, to, text);
-                    after_idx + 1
-                } else {
-                    diagram.add_message(from, to, text);
-                    diagram.event_count() - 1
+                let event_idx = match editor_state.insert_after_index {
+                    Some(usize::MAX) => {
+                        diagram.events.insert(0, Event::Message { from, to, text });
+                        0
+                    }
+                    Some(after_idx) => {
+                        diagram.insert_message(after_idx, from, to, text);
+                        after_idx + 1
+                    }
+                    None => {
+                        diagram.add_message(from, to, text);
+                        diagram.event_count() - 1
+                    }
                 };
                 world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
             }
@@ -732,12 +782,28 @@ fn handle_input_confirm(world: &mut World) {
                 )
             {
                 let diagram = world.get_mut::<SequenceDiagram>();
-                let event_idx = if let Some(after_idx) = editor_state.insert_after_index {
-                    diagram.insert_note(after_idx, editor_state.note_position, start, end, text);
-                    after_idx + 1
-                } else {
-                    diagram.add_note(editor_state.note_position, start, end, text);
-                    diagram.event_count() - 1
+                let position = editor_state.note_position;
+                let event_idx = match editor_state.insert_after_index {
+                    Some(usize::MAX) => {
+                        diagram.events.insert(
+                            0,
+                            Event::Note {
+                                position,
+                                participant_start: start,
+                                participant_end: end,
+                                text,
+                            },
+                        );
+                        0
+                    }
+                    Some(after_idx) => {
+                        diagram.insert_note(after_idx, position, start, end, text);
+                        after_idx + 1
+                    }
+                    None => {
+                        diagram.add_note(position, start, end, text);
+                        diagram.event_count() - 1
+                    }
                 };
                 world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
             }
