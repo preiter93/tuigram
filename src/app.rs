@@ -58,7 +58,7 @@ fn global_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(GLOBAL, 'e', "Add event", |world| {
+    kb.bind(GLOBAL, 'm', "Add message", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode == EditorMode::Normal {
             let participant_count = world.get::<SequenceDiagram>().participant_count();

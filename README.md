@@ -51,7 +51,7 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | Key | Action |
 |-----|--------|
 | `p` | Add participant |
-| `e` | Add event |
+| `m` | Add message |
 | `n` | Add note |
 | `h/l` or `←/→` | Navigate left/right (participants) |
 | `j/k` or `↓/↑` | Navigate down/up (events) |

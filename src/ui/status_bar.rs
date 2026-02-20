@@ -48,9 +48,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
                     "p: participant  ?: help  Ctrl+c: quit"
                 }
             } else if has_selection {
-                "p: participant  e: event  n: note  d: delete  ?: help  Ctrl+c: quit"
+                "p: participant  m: message  n: note  d: delete  ?: help  Ctrl+c: quit"
             } else {
-                "p: participant  e: event  n: note  ?: help  Ctrl+c: quit"
+                "p: participant  m: message  n: note  ?: help  Ctrl+c: quit"
             }
         }
         EditorMode::InputParticipant

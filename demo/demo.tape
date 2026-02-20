@@ -55,7 +55,7 @@ Enter
 Sleep 1s
 
 # Client(0) -> Gateway(1): Request
-Type "e"
+Type "m"
 Sleep 600ms
 Enter
 Sleep 400ms
@@ -69,7 +69,7 @@ Enter
 Sleep 800ms
 
 # Gateway(1) -> Auth(2): Validate Token
-Type "e"
+Type "m"
 Sleep 600ms
 Down
 Sleep 300ms
@@ -85,7 +85,7 @@ Enter
 Sleep 800ms
 
 # Auth(2) -> Auth(2): Check Permissions (self-message)
-Type "e"
+Type "m"
 Sleep 600ms
 Down Down
 Sleep 300ms
@@ -99,7 +99,7 @@ Enter
 Sleep 800ms
 
 # Auth(2) -> Gateway(1): Token Valid
-Type "e"
+Type "m"
 Sleep 600ms
 Down Down
 Sleep 300ms
@@ -115,7 +115,7 @@ Enter
 Sleep 800ms
 
 # Gateway(1) -> Orders(3): Get Orders
-Type "e"
+Type "m"
 Sleep 600ms
 Down
 Sleep 300ms
@@ -131,7 +131,7 @@ Enter
 Sleep 800ms
 
 # Orders(3) -> Gateway(1): Order List
-Type "e"
+Type "m"
 Sleep 600ms
 Down Down Down
 Sleep 300ms
@@ -147,7 +147,7 @@ Enter
 Sleep 800ms
 
 # Gateway(1) -> Client(0): Response
-Type "e"
+Type "m"
 Sleep 600ms
 Down
 Sleep 300ms
