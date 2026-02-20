@@ -1,4 +1,5 @@
 use super::Selection;
+use crate::core::NotePosition;
 use std::time::Instant;
 
 #[derive(Default, Clone, PartialEq, Eq)]
@@ -15,13 +16,28 @@ pub enum EditorMode {
     RenameParticipant,
     Help,
     ConfirmClear,
+    SelectNoteParticipant,
+    SelectNotePosition,
+    SelectNoteEndParticipant,
+    InputNoteText,
+    EditNoteParticipant,
+    EditNotePosition,
+    EditNoteEndParticipant,
+    EditNoteText,
 }
 
 impl EditorMode {
     pub fn is_selecting_participant(&self) -> bool {
         matches!(
             self,
-            Self::SelectFrom | Self::SelectTo | Self::EditSelectFrom | Self::EditSelectTo
+            Self::SelectFrom
+                | Self::SelectTo
+                | Self::EditSelectFrom
+                | Self::EditSelectTo
+                | Self::SelectNoteParticipant
+                | Self::SelectNoteEndParticipant
+                | Self::EditNoteParticipant
+                | Self::EditNoteEndParticipant
         )
     }
 
@@ -36,7 +52,13 @@ impl EditorMode {
                 | Self::InputMessage
                 | Self::EditMessage
                 | Self::RenameParticipant
+                | Self::InputNoteText
+                | Self::EditNoteText
         )
+    }
+
+    pub fn is_selecting_note_position(&self) -> bool {
+        matches!(self, Self::SelectNotePosition | Self::EditNotePosition)
     }
 }
 
@@ -57,6 +79,9 @@ pub struct EditorState {
     pub selection: Selection,
     pub editing_event_index: Option<usize>,
     pub last_participant_index: Option<usize>,
+    pub note_position: NotePosition,
+    pub note_participant_start: Option<usize>,
+    pub note_participant_end: Option<usize>,
 }
 
 impl EditorState {
@@ -72,6 +97,9 @@ impl EditorState {
         self.message_to = None;
         self.status_message = None;
         self.editing_event_index = None;
+        self.note_position = NotePosition::default();
+        self.note_participant_start = None;
+        self.note_participant_end = None;
         // Note: don't reset last_participant_index - we want to remember it
     }
 

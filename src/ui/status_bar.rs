@@ -27,6 +27,16 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         EditorMode::EditMessage | EditorMode::RenameParticipant => ("EDIT", theme.status_input),
         EditorMode::Help => ("HELP", theme.status_help),
         EditorMode::ConfirmClear => ("CONFIRM", theme.status_select),
+        EditorMode::SelectNoteParticipant | EditorMode::EditNoteParticipant => {
+            ("SELECT PARTICIPANT", theme.status_select)
+        }
+        EditorMode::SelectNotePosition | EditorMode::EditNotePosition => {
+            ("SELECT POSITION", theme.status_select)
+        }
+        EditorMode::SelectNoteEndParticipant | EditorMode::EditNoteEndParticipant => {
+            ("SELECT END", theme.status_select)
+        }
+        EditorMode::InputNoteText | EditorMode::EditNoteText => ("NOTE", theme.status_input),
     };
 
     let hints = match mode {
@@ -38,19 +48,28 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
                     "p: participant  ?: help  Ctrl+c: quit"
                 }
             } else if has_selection {
-                "p: participant  e: event  d: delete  ?: help  Ctrl+c: quit"
+                "p: participant  e: event  n: note  d: delete  ?: help  Ctrl+c: quit"
             } else {
-                "p: participant  e: event  ?: help  Ctrl+c: quit"
+                "p: participant  e: event  n: note  ?: help  Ctrl+c: quit"
             }
         }
         EditorMode::InputParticipant
         | EditorMode::InputMessage
         | EditorMode::EditMessage
-        | EditorMode::RenameParticipant => "Enter: confirm  Esc: cancel",
+        | EditorMode::RenameParticipant
+        | EditorMode::InputNoteText
+        | EditorMode::EditNoteText => "Enter: confirm  Esc: cancel",
         EditorMode::SelectFrom
         | EditorMode::SelectTo
         | EditorMode::EditSelectFrom
-        | EditorMode::EditSelectTo => "↑↓: navigate  Enter: select  Esc: cancel",
+        | EditorMode::EditSelectTo
+        | EditorMode::SelectNoteParticipant
+        | EditorMode::SelectNoteEndParticipant
+        | EditorMode::EditNoteParticipant
+        | EditorMode::EditNoteEndParticipant => "↑↓: navigate  Enter: select  Esc: cancel",
+        EditorMode::SelectNotePosition | EditorMode::EditNotePosition => {
+            "↑↓: change position  Enter: confirm  Esc: cancel"
+        }
         EditorMode::Help => "?: close",
         EditorMode::ConfirmClear => "y/Enter: confirm  n/Esc: cancel",
     };

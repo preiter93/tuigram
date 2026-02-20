@@ -7,7 +7,10 @@ use ratatui::{
 use tui_world::World;
 
 use super::{EditorMode, EditorState};
-use crate::{core::SequenceDiagram, theme::Theme};
+use crate::{
+    core::{NotePosition, SequenceDiagram},
+    theme::Theme,
+};
 
 pub fn render_input_popup(frame: &mut Frame, world: &World) {
     let editor = world.get::<EditorState>();
@@ -34,6 +37,36 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
                 "Message"
             };
             (title.to_string(), Some(format!("{from_name} → {to_name}:")))
+        }
+        EditorMode::InputNoteText | EditorMode::EditNoteText => {
+            let position = editor.note_position;
+            let start_name = editor
+                .note_participant_start
+                .and_then(|i| diagram.participants.get(i))
+                .map_or("?", String::as_str);
+            let end_name = editor
+                .note_participant_end
+                .and_then(|i| diagram.participants.get(i))
+                .map_or("?", String::as_str);
+
+            let pos_str = match position {
+                NotePosition::Right => format!("Right of {start_name}"),
+                NotePosition::Left => format!("Left of {start_name}"),
+                NotePosition::Over => {
+                    if start_name == end_name {
+                        format!("Over {start_name}")
+                    } else {
+                        format!("Over {start_name},{end_name}")
+                    }
+                }
+            };
+
+            let title = if editor.mode == EditorMode::EditNoteText {
+                "Edit Note"
+            } else {
+                "Note"
+            };
+            (title.to_string(), Some(format!("{pos_str}:")))
         }
         _ => return,
     };

@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_lines)]
 
 use crate::{
-    core::{Event, SequenceDiagram},
+    core::{Event, NotePosition, SequenceDiagram},
     render::render_sequence,
     theme::Theme,
     ui::{
@@ -68,6 +68,21 @@ fn global_keybindings(world: &mut World) {
                 editor.selected_index = 0;
                 editor.message_from = None;
                 editor.message_to = None;
+            }
+        }
+    });
+
+    kb.bind(GLOBAL, 'n', "Add note", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::Normal {
+            let participant_count = world.get::<SequenceDiagram>().participant_count();
+            if participant_count >= 1 {
+                let editor = world.get_mut::<EditorState>();
+                editor.mode = EditorMode::SelectNoteParticipant;
+                editor.selected_index = 0;
+                editor.note_position = NotePosition::Right;
+                editor.note_participant_start = None;
+                editor.note_participant_end = None;
             }
         }
     });
@@ -318,14 +333,32 @@ fn global_keybindings(world: &mut World) {
                     let diagram = world.get::<SequenceDiagram>();
                     diagram.events.get(idx).cloned()
                 };
-                if let Some(Event::Message { from, to, text }) = event_data {
-                    let editor = world.get_mut::<EditorState>();
-                    editor.editing_event_index = Some(idx);
-                    editor.message_from = Some(from);
-                    editor.message_to = Some(to);
-                    editor.input_buffer = text;
-                    editor.selected_index = from;
-                    editor.mode = EditorMode::EditSelectFrom;
+                match event_data {
+                    Some(Event::Message { from, to, text }) => {
+                        let editor = world.get_mut::<EditorState>();
+                        editor.editing_event_index = Some(idx);
+                        editor.message_from = Some(from);
+                        editor.message_to = Some(to);
+                        editor.input_buffer = text;
+                        editor.selected_index = from;
+                        editor.mode = EditorMode::EditSelectFrom;
+                    }
+                    Some(Event::Note {
+                        position,
+                        participant_start,
+                        participant_end,
+                        text,
+                    }) => {
+                        let editor = world.get_mut::<EditorState>();
+                        editor.editing_event_index = Some(idx);
+                        editor.note_position = position;
+                        editor.note_participant_start = Some(participant_start);
+                        editor.note_participant_end = Some(participant_end);
+                        editor.input_buffer = text;
+                        editor.selected_index = participant_start;
+                        editor.mode = EditorMode::EditNoteParticipant;
+                    }
+                    None => {}
                 }
             }
             Selection::Participant(idx) => {
@@ -357,13 +390,30 @@ fn global_keybindings(world: &mut World) {
                     let diagram = world.get::<SequenceDiagram>();
                     diagram.events.get(idx).cloned()
                 };
-                if let Some(Event::Message { from, to, text }) = event_data {
-                    let editor = world.get_mut::<EditorState>();
-                    editor.editing_event_index = Some(idx);
-                    editor.message_from = Some(from);
-                    editor.message_to = Some(to);
-                    editor.input_buffer = text;
-                    editor.mode = EditorMode::EditMessage;
+                match event_data {
+                    Some(Event::Message { from, to, text }) => {
+                        let editor = world.get_mut::<EditorState>();
+                        editor.editing_event_index = Some(idx);
+                        editor.message_from = Some(from);
+                        editor.message_to = Some(to);
+                        editor.input_buffer = text;
+                        editor.mode = EditorMode::EditMessage;
+                    }
+                    Some(Event::Note {
+                        position,
+                        participant_start,
+                        participant_end,
+                        text,
+                    }) => {
+                        let editor = world.get_mut::<EditorState>();
+                        editor.editing_event_index = Some(idx);
+                        editor.note_position = position;
+                        editor.note_participant_start = Some(participant_start);
+                        editor.note_participant_end = Some(participant_end);
+                        editor.input_buffer = text;
+                        editor.mode = EditorMode::EditNoteText;
+                    }
+                    None => {}
                 }
             }
             Selection::Participant(idx) => {
@@ -415,7 +465,13 @@ fn input_mode_keybindings(world: &mut World) {
     );
 
     kb.bind(INPUT_MODE, KeyBinding::key(KeyCode::Up), "Up", |world| {
-        handle_input_mode_nav(world, -1);
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode.is_selecting_note_position() {
+            let editor = world.get_mut::<EditorState>();
+            editor.note_position = editor.note_position.prev();
+        } else {
+            handle_input_mode_nav(world, -1);
+        }
     });
 
     kb.bind(
@@ -423,7 +479,13 @@ fn input_mode_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Down),
         "Down",
         |world| {
-            handle_input_mode_nav(world, 1);
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode.is_selecting_note_position() {
+                let editor = world.get_mut::<EditorState>();
+                editor.note_position = editor.note_position.next();
+            } else {
+                handle_input_mode_nav(world, 1);
+            }
         },
     );
 
@@ -432,7 +494,13 @@ fn input_mode_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Left),
         "Left",
         |world| {
-            handle_input_mode_nav(world, -1);
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode.is_selecting_note_position() {
+                let editor = world.get_mut::<EditorState>();
+                editor.note_position = editor.note_position.prev();
+            } else {
+                handle_input_mode_nav(world, -1);
+            }
         },
     );
 
@@ -441,7 +509,13 @@ fn input_mode_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Right),
         "Right",
         |world| {
-            handle_input_mode_nav(world, 1);
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode.is_selecting_note_position() {
+                let editor = world.get_mut::<EditorState>();
+                editor.note_position = editor.note_position.next();
+            } else {
+                handle_input_mode_nav(world, 1);
+            }
         },
     );
 
@@ -449,6 +523,9 @@ fn input_mode_keybindings(world: &mut World) {
         let mode = world.get::<EditorState>().mode.clone();
         if mode.is_selecting_participant() {
             handle_input_mode_nav(world, -1);
+        } else if mode.is_selecting_note_position() {
+            let editor = world.get_mut::<EditorState>();
+            editor.note_position = editor.note_position.prev();
         } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('k');
         }
@@ -458,6 +535,9 @@ fn input_mode_keybindings(world: &mut World) {
         let mode = world.get::<EditorState>().mode.clone();
         if mode.is_selecting_participant() {
             handle_input_mode_nav(world, 1);
+        } else if mode.is_selecting_note_position() {
+            let editor = world.get_mut::<EditorState>();
+            editor.note_position = editor.note_position.next();
         } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('j');
         }
@@ -467,6 +547,9 @@ fn input_mode_keybindings(world: &mut World) {
         let mode = world.get::<EditorState>().mode.clone();
         if mode.is_selecting_participant() {
             handle_input_mode_nav(world, -1);
+        } else if mode.is_selecting_note_position() {
+            let editor = world.get_mut::<EditorState>();
+            editor.note_position = editor.note_position.prev();
         } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('h');
         }
@@ -476,6 +559,9 @@ fn input_mode_keybindings(world: &mut World) {
         let mode = world.get::<EditorState>().mode.clone();
         if mode.is_selecting_participant() {
             handle_input_mode_nav(world, 1);
+        } else if mode.is_selecting_note_position() {
+            let editor = world.get_mut::<EditorState>();
+            editor.note_position = editor.note_position.next();
         } else if mode.is_text_input() {
             world.get_mut::<EditorState>().input_buffer.push('l');
         }
@@ -593,6 +679,81 @@ fn handle_input_confirm(world: &mut World) {
             }
             world.get_mut::<EditorState>().reset();
         }
+        EditorMode::SelectNoteParticipant => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.note_participant_start = Some(selected);
+            editor.mode = EditorMode::SelectNotePosition;
+        }
+        EditorMode::SelectNotePosition => {
+            let editor = world.get::<EditorState>();
+            let position = editor.note_position;
+            if position == NotePosition::Over {
+                let editor = world.get_mut::<EditorState>();
+                editor.mode = EditorMode::SelectNoteEndParticipant;
+                editor.selected_index = editor.note_participant_start.unwrap_or(0);
+            } else {
+                let editor = world.get_mut::<EditorState>();
+                editor.note_participant_end = editor.note_participant_start;
+                editor.mode = EditorMode::InputNoteText;
+                editor.input_buffer.clear();
+            }
+        }
+        EditorMode::SelectNoteEndParticipant => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.note_participant_end = Some(selected);
+            editor.mode = EditorMode::InputNoteText;
+            editor.input_buffer.clear();
+        }
+        EditorMode::InputNoteText => {
+            let editor_state = world.get::<EditorState>().clone();
+            let text = editor_state.input_buffer.trim().to_string();
+            if !text.is_empty()
+                && let (Some(start), Some(end)) = (
+                    editor_state.note_participant_start,
+                    editor_state.note_participant_end,
+                )
+            {
+                world.get_mut::<SequenceDiagram>().add_note(
+                    editor_state.note_position,
+                    start,
+                    end,
+                    text,
+                );
+                let event_idx = world.get::<SequenceDiagram>().event_count() - 1;
+                world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
+            }
+            world.get_mut::<EditorState>().reset();
+        }
+        EditorMode::EditNoteParticipant => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.note_participant_start = Some(selected);
+            editor.mode = EditorMode::EditNotePosition;
+        }
+        EditorMode::EditNotePosition => {
+            let editor = world.get::<EditorState>();
+            let position = editor.note_position;
+            if position == NotePosition::Over {
+                let editor = world.get_mut::<EditorState>();
+                editor.mode = EditorMode::EditNoteEndParticipant;
+                editor.selected_index = editor.note_participant_end.unwrap_or(0);
+            } else {
+                let editor = world.get_mut::<EditorState>();
+                editor.note_participant_end = editor.note_participant_start;
+                editor.mode = EditorMode::EditNoteText;
+            }
+        }
+        EditorMode::EditNoteEndParticipant => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.note_participant_end = Some(selected);
+            editor.mode = EditorMode::EditNoteText;
+        }
+        EditorMode::EditNoteText => {
+            save_note_changes(world);
+        }
         _ => {}
     }
 }
@@ -613,6 +774,33 @@ fn save_event_changes(world: &mut World) {
         {
             *f = from;
             *t = to;
+            *txt = text;
+        }
+    }
+    world.get_mut::<EditorState>().reset();
+}
+
+fn save_note_changes(world: &mut World) {
+    let editor_state = world.get::<EditorState>().clone();
+    let text = editor_state.input_buffer.trim().to_string();
+    if let Some(idx) = editor_state.editing_event_index
+        && let (Some(start), Some(end)) = (
+            editor_state.note_participant_start,
+            editor_state.note_participant_end,
+        )
+        && !text.is_empty()
+    {
+        let diagram = world.get_mut::<SequenceDiagram>();
+        if let Some(Event::Note {
+            position: pos,
+            participant_start: s,
+            participant_end: e,
+            text: txt,
+        }) = diagram.events.get_mut(idx)
+        {
+            *pos = editor_state.note_position;
+            *s = start;
+            *e = end;
             *txt = text;
         }
     }
@@ -675,7 +863,9 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         EditorMode::InputParticipant
         | EditorMode::InputMessage
         | EditorMode::EditMessage
-        | EditorMode::RenameParticipant => {
+        | EditorMode::RenameParticipant
+        | EditorMode::InputNoteText
+        | EditorMode::EditNoteText => {
             render_input_popup(frame, world);
         }
         EditorMode::SelectFrom
@@ -683,6 +873,15 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         | EditorMode::EditSelectFrom
         | EditorMode::EditSelectTo => {
             render_dual_participant_selector(frame, area, world);
+        }
+        EditorMode::SelectNoteParticipant
+        | EditorMode::SelectNoteEndParticipant
+        | EditorMode::EditNoteParticipant
+        | EditorMode::EditNoteEndParticipant => {
+            render_note_participant_selector(frame, area, world);
+        }
+        EditorMode::SelectNotePosition | EditorMode::EditNotePosition => {
+            render_note_position_selector(frame, area, world);
         }
         EditorMode::Help => {
             let active = vec![GLOBAL];
@@ -837,6 +1036,120 @@ fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World
                 x: inner.x + col_width,
                 y,
                 width: col_width,
+                height: 1,
+            },
+        );
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn render_note_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
+    let editor = world.get::<EditorState>();
+    let diagram = world.get::<SequenceDiagram>();
+    let theme = world.get::<Theme>();
+
+    let participants = &diagram.participants;
+    let cursor = editor.selected_index;
+    let is_selecting_end = matches!(
+        editor.mode,
+        EditorMode::SelectNoteEndParticipant | EditorMode::EditNoteEndParticipant
+    );
+
+    let popup_width = 40.min(area.width.saturating_sub(4));
+    let popup_height = (participants.len() as u16 + 4).min(area.height.saturating_sub(4));
+
+    let popup_area = centered_rect(popup_width, popup_height, area);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let title = if is_selecting_end {
+        " Note: End Participant "
+    } else {
+        " Note: Participant "
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme.border);
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    for (i, name) in participants.iter().enumerate() {
+        if i as u16 >= inner.height {
+            break;
+        }
+
+        let y = inner.y + i as u16;
+        let is_cursor = cursor == i;
+        let prefix = if is_cursor { "▶ " } else { "  " };
+        let style = if is_cursor {
+            theme.selected
+        } else {
+            theme.text
+        };
+
+        frame.render_widget(
+            Paragraph::new(format!("{prefix}{name}")).style(style),
+            Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
+    let editor = world.get::<EditorState>();
+    let diagram = world.get::<SequenceDiagram>();
+    let theme = world.get::<Theme>();
+
+    let current_position = editor.note_position;
+    let participant_name = editor
+        .note_participant_start
+        .and_then(|i| diagram.participants.get(i))
+        .map_or("?", String::as_str);
+
+    let positions = [
+        (NotePosition::Right, "Right of"),
+        (NotePosition::Left, "Left of"),
+        (NotePosition::Over, "Over"),
+    ];
+
+    let popup_width = 40.min(area.width.saturating_sub(4));
+    let popup_height = 7;
+
+    let popup_area = centered_rect(popup_width, popup_height, area);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = Block::default()
+        .title(format!(" Note Position ({participant_name}) "))
+        .borders(Borders::ALL)
+        .border_style(theme.border);
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    for (i, (pos, label)) in positions.iter().enumerate() {
+        let y = inner.y + i as u16;
+        let is_selected = *pos == current_position;
+        let prefix = if is_selected { "▶ " } else { "  " };
+        let style = if is_selected {
+            theme.selected
+        } else {
+            theme.text
+        };
+
+        frame.render_widget(
+            Paragraph::new(format!("{prefix}{label}")).style(style),
+            Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
                 height: 1,
             },
         );

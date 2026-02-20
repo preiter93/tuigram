@@ -1,4 +1,4 @@
-use super::models::Event;
+use super::models::{Event, NotePosition};
 use anyhow::{Result, bail};
 
 #[derive(Default, Clone)]
@@ -22,6 +22,24 @@ impl SequenceDiagram {
         }
     }
 
+    pub fn add_note(
+        &mut self,
+        position: NotePosition,
+        participant_start: usize,
+        participant_end: usize,
+        text: String,
+    ) {
+        if participant_start < self.participants.len() && participant_end < self.participants.len()
+        {
+            self.events.push(Event::Note {
+                position,
+                participant_start,
+                participant_end,
+                text,
+            });
+        }
+    }
+
     pub fn participant_count(&self) -> usize {
         self.participants.len()
     }
@@ -42,16 +60,35 @@ impl SequenceDiagram {
         }
         self.participants.swap(a, b);
         for e in &mut self.events {
-            let Event::Message { from, to, .. } = e;
-            if *from == a {
-                *from = b;
-            } else if *from == b {
-                *from = a;
-            }
-            if *to == a {
-                *to = b;
-            } else if *to == b {
-                *to = a;
+            match e {
+                Event::Message { from, to, .. } => {
+                    if *from == a {
+                        *from = b;
+                    } else if *from == b {
+                        *from = a;
+                    }
+                    if *to == a {
+                        *to = b;
+                    } else if *to == b {
+                        *to = a;
+                    }
+                }
+                Event::Note {
+                    participant_start,
+                    participant_end,
+                    ..
+                } => {
+                    if *participant_start == a {
+                        *participant_start = b;
+                    } else if *participant_start == b {
+                        *participant_start = a;
+                    }
+                    if *participant_end == a {
+                        *participant_end = b;
+                    } else if *participant_end == b {
+                        *participant_end = a;
+                    }
+                }
             }
         }
     }
@@ -77,17 +114,36 @@ impl SequenceDiagram {
             return;
         }
         self.participants.remove(idx);
-        self.events.retain(|e| {
-            let Event::Message { from, to, .. } = e;
-            *from != idx && *to != idx
+        self.events.retain(|e| match e {
+            Event::Message { from, to, .. } => *from != idx && *to != idx,
+            Event::Note {
+                participant_start,
+                participant_end,
+                ..
+            } => *participant_start != idx && *participant_end != idx,
         });
         for e in &mut self.events {
-            let Event::Message { from, to, .. } = e;
-            if *from > idx {
-                *from -= 1;
-            }
-            if *to > idx {
-                *to -= 1;
+            match e {
+                Event::Message { from, to, .. } => {
+                    if *from > idx {
+                        *from -= 1;
+                    }
+                    if *to > idx {
+                        *to -= 1;
+                    }
+                }
+                Event::Note {
+                    participant_start,
+                    participant_end,
+                    ..
+                } => {
+                    if *participant_start > idx {
+                        *participant_start -= 1;
+                    }
+                    if *participant_end > idx {
+                        *participant_end -= 1;
+                    }
+                }
             }
         }
     }
@@ -100,11 +156,34 @@ impl SequenceDiagram {
         }
 
         for event in &self.events {
-            let Event::Message { from, to, text } = event;
-            if let (Some(from_name), Some(to_name)) =
-                (self.participants.get(*from), self.participants.get(*to))
-            {
-                lines.push(format!("    {from_name}->>{to_name}:{text}"));
+            match event {
+                Event::Message { from, to, text } => {
+                    if let (Some(from_name), Some(to_name)) =
+                        (self.participants.get(*from), self.participants.get(*to))
+                    {
+                        lines.push(format!("    {from_name}->>{to_name}: {text}"));
+                    }
+                }
+                Event::Note {
+                    position,
+                    participant_start,
+                    participant_end,
+                    text,
+                } => {
+                    let pos_str = position.as_str();
+                    if *position == NotePosition::Over && participant_start != participant_end {
+                        if let (Some(start_name), Some(end_name)) = (
+                            self.participants.get(*participant_start),
+                            self.participants.get(*participant_end),
+                        ) {
+                            lines.push(format!(
+                                "    Note {pos_str} {start_name},{end_name}: {text}"
+                            ));
+                        }
+                    } else if let Some(name) = self.participants.get(*participant_start) {
+                        lines.push(format!("    Note {pos_str} {name}: {text}"));
+                    }
+                }
             }
         }
 
@@ -138,6 +217,78 @@ impl SequenceDiagram {
                 }
                 if !diagram.participants.contains(&name) {
                     diagram.participants.push(name);
+                }
+                continue;
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("Note ") {
+                let (position, after_pos) = if let Some(after) = rest.strip_prefix("right of ") {
+                    (NotePosition::Right, after)
+                } else if let Some(after) = rest.strip_prefix("left of ") {
+                    (NotePosition::Left, after)
+                } else if let Some(after) = rest.strip_prefix("over ") {
+                    (NotePosition::Over, after)
+                } else {
+                    bail!("Invalid note position: {line}");
+                };
+
+                let Some(colon_pos) = after_pos.find(':') else {
+                    bail!("Invalid note syntax (missing ':'): {line}");
+                };
+
+                let participants_str = after_pos[..colon_pos].trim();
+                let text = after_pos[colon_pos + 1..].trim().to_string();
+
+                if position == NotePosition::Over && participants_str.contains(',') {
+                    let parts: Vec<&str> = participants_str.split(',').map(str::trim).collect();
+                    if parts.len() != 2 {
+                        bail!("Note over must have exactly 2 participants: {line}");
+                    }
+                    let start_name = parts[0];
+                    let end_name = parts[1];
+
+                    if !diagram.participants.contains(&start_name.to_string()) {
+                        diagram.participants.push(start_name.to_string());
+                    }
+                    if !diagram.participants.contains(&end_name.to_string()) {
+                        diagram.participants.push(end_name.to_string());
+                    }
+
+                    let start_idx = diagram
+                        .participants
+                        .iter()
+                        .position(|p| p == start_name)
+                        .unwrap();
+                    let end_idx = diagram
+                        .participants
+                        .iter()
+                        .position(|p| p == end_name)
+                        .unwrap();
+
+                    diagram.events.push(Event::Note {
+                        position,
+                        participant_start: start_idx,
+                        participant_end: end_idx,
+                        text,
+                    });
+                } else {
+                    let name = participants_str;
+                    if name.is_empty() {
+                        bail!("Invalid note syntax: {line}");
+                    }
+
+                    if !diagram.participants.contains(&name.to_string()) {
+                        diagram.participants.push(name.to_string());
+                    }
+
+                    let idx = diagram.participants.iter().position(|p| p == name).unwrap();
+
+                    diagram.events.push(Event::Note {
+                        position,
+                        participant_start: idx,
+                        participant_end: idx,
+                        text,
+                    });
                 }
                 continue;
             }
@@ -240,10 +391,64 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_feature() {
+    fn test_note_right() {
         let input = "sequenceDiagram
+    participant Alice
     Note right of Alice: This is a note";
-        let result = SequenceDiagram::from_mermaid(input);
-        assert!(result.is_err());
+        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
+        assert_eq!(diagram.events.len(), 1);
+        if let Event::Note {
+            position,
+            participant_start,
+            text,
+            ..
+        } = &diagram.events[0]
+        {
+            assert_eq!(*position, NotePosition::Right);
+            assert_eq!(*participant_start, 0);
+            assert_eq!(text, "This is a note");
+        } else {
+            panic!("Expected Note event");
+        }
+    }
+
+    #[test]
+    fn test_note_over_multiple() {
+        let input = "sequenceDiagram
+    participant Alice
+    participant Bob
+    Note over Alice,Bob: Spanning note";
+        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
+        assert_eq!(diagram.events.len(), 1);
+        if let Event::Note {
+            position,
+            participant_start,
+            participant_end,
+            text,
+        } = &diagram.events[0]
+        {
+            assert_eq!(*position, NotePosition::Over);
+            assert_eq!(*participant_start, 0);
+            assert_eq!(*participant_end, 1);
+            assert_eq!(text, "Spanning note");
+        } else {
+            panic!("Expected Note event");
+        }
+    }
+
+    #[test]
+    fn test_note_roundtrip() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_participant("Bob".to_string());
+        diagram.add_note(NotePosition::Right, 0, 0, "Right note".to_string());
+        diagram.add_note(NotePosition::Left, 1, 1, "Left note".to_string());
+        diagram.add_note(NotePosition::Over, 0, 1, "Over note".to_string());
+
+        let mermaid = diagram.to_mermaid();
+        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
+
+        assert_eq!(parsed.participants, diagram.participants);
+        assert_eq!(parsed.events.len(), 3);
     }
 }

@@ -52,6 +52,7 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 |-----|--------|
 | `p` | Add participant |
 | `e` | Add event |
+| `n` | Add note |
 | `h/l` or `←/→` | Navigate left/right (participants) |
 | `j/k` or `↓/↑` | Navigate down/up (events) |
 | `H/L` | Move participant left/right, reverse event arrow |

@@ -4,12 +4,12 @@ use ratatui::{
     Frame,
     layout::{Alignment, Margin, Rect},
     text::Line,
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation},
+    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation},
 };
 use tui_world::World;
 
 use crate::{
-    core::{Event, SequenceDiagram},
+    core::{Event, NotePosition, SequenceDiagram},
     theme::Theme,
     ui::{
         EditorState, FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, MESSAGE_SPACING, Selection,
@@ -171,9 +171,7 @@ fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_st
         let Some(event) = diagram.events.get(i) else {
             continue;
         };
-        let Event::Message { from, to, text } = event;
-        let from_x = participants[*from];
-        let to_x = participants[*to];
+
         let visible_index = i - scroll_offset;
         let y = lifeline_start + FIRST_MESSAGE_OFFSET + (visible_index as u16 * MESSAGE_SPACING);
 
@@ -183,64 +181,197 @@ fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_st
             theme.text
         };
 
-        if from == to {
-            let loop_width: u16 = 4;
+        match event {
+            Event::Message { from, to, text } => {
+                render_message(f, participants, *from, *to, text, y, style);
+            }
+            Event::Note {
+                position,
+                participant_start,
+                participant_end,
+                text,
+            } => {
+                render_note(
+                    f,
+                    participants,
+                    *position,
+                    *participant_start,
+                    *participant_end,
+                    text,
+                    y,
+                    style,
+                );
+            }
+        }
+    }
+}
 
-            let mut area = Rect {
-                x: from_x,
-                y: y.saturating_sub(1),
-                width: loop_width,
+fn render_message(
+    f: &mut Frame,
+    participants: &[u16],
+    from: usize,
+    to: usize,
+    text: &str,
+    y: u16,
+    style: ratatui::style::Style,
+) {
+    let from_x = participants[from];
+    let to_x = participants[to];
+
+    if from == to {
+        let loop_width: u16 = 4;
+
+        let mut area = Rect {
+            x: from_x,
+            y: y.saturating_sub(1),
+            width: loop_width,
+            height: 1,
+        };
+
+        f.render_widget(Paragraph::new("───┐").style(style), area);
+
+        area.y = y;
+        f.render_widget(Paragraph::new("   │").style(style), area);
+
+        area.y = y + 1;
+        f.render_widget(Paragraph::new("◀──┘").style(style), area);
+
+        area.x = from_x + loop_width;
+        area.y = y;
+        area.width = text.len() as u16;
+        f.render_widget(Paragraph::new(text).style(style), area);
+    } else {
+        let start = from_x.min(to_x);
+        let end = from_x.max(to_x);
+        let len = end - start;
+
+        let mut arrow = "─".repeat(len as usize);
+        if from_x < to_x {
+            arrow.push('▶');
+        } else {
+            arrow.insert(0, '◀');
+        }
+
+        f.render_widget(
+            Paragraph::new(Line::from(arrow)).style(style),
+            Rect {
+                x: start,
+                y,
+                width: len + 1,
                 height: 1,
+            },
+        );
+
+        let text_width = text.len() as u16;
+        let text_x = start + len.div_ceil(2);
+        let text_start = text_x.saturating_sub(text_width / 2);
+
+        f.render_widget(
+            Paragraph::new(text)
+                .alignment(Alignment::Center)
+                .style(style),
+            Rect {
+                x: text_start,
+                y: y.saturating_sub(1),
+                width: text_width,
+                height: 1,
+            },
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_note(
+    f: &mut Frame,
+    participants: &[u16],
+    position: NotePosition,
+    participant_start: usize,
+    participant_end: usize,
+    text: &str,
+    y: u16,
+    style: ratatui::style::Style,
+) {
+    let start_x = participants[participant_start];
+    let end_x = participants[participant_end];
+
+    let text_width = text.len() as u16;
+    let box_width = text_width + 4;
+
+    match position {
+        NotePosition::Right => {
+            let box_x = start_x.saturating_add(2);
+            let box_area = Rect {
+                x: box_x,
+                y: y.saturating_sub(1),
+                width: box_width,
+                height: 3,
             };
 
-            f.render_widget(Paragraph::new("───┐").style(style), area);
+            f.render_widget(Clear, box_area);
 
-            area.y = y;
-            f.render_widget(Paragraph::new("   │").style(style), area);
-
-            area.y = y + 1;
-            f.render_widget(Paragraph::new("◀──┘").style(style), area);
-
-            area.x = from_x + loop_width;
-            area.y = y;
-            area.width = text.len() as u16;
-            f.render_widget(Paragraph::new(text.as_str()).style(style), area);
-        } else {
-            let start = from_x.min(to_x);
-            let end = from_x.max(to_x);
-            let len = end - start;
-
-            let mut arrow = "─".repeat(len as usize);
-            if from_x < to_x {
-                arrow.push('▶');
-            } else {
-                arrow.insert(0, '◀');
-            }
+            let block = Block::default().borders(Borders::ALL).border_style(style);
+            let inner = block.inner(box_area);
+            f.render_widget(block, box_area);
 
             f.render_widget(
-                Paragraph::new(Line::from(arrow)).style(style),
-                Rect {
-                    x: start,
-                    y,
-                    width: len + 1,
-                    height: 1,
-                },
-            );
-
-            let text_width = text.len() as u16;
-            let text_x = start + len.div_ceil(2);
-            let text_start = text_x.saturating_sub(text_width / 2);
-
-            f.render_widget(
-                Paragraph::new(text.as_str())
+                Paragraph::new(text)
                     .alignment(Alignment::Center)
                     .style(style),
-                Rect {
-                    x: text_start,
-                    y: y.saturating_sub(1),
-                    width: text_width,
-                    height: 1,
-                },
+                inner,
+            );
+        }
+        NotePosition::Left => {
+            let box_x = start_x.saturating_sub(box_width + 1);
+            let box_area = Rect {
+                x: box_x,
+                y: y.saturating_sub(1),
+                width: box_width,
+                height: 3,
+            };
+
+            f.render_widget(Clear, box_area);
+
+            let block = Block::default().borders(Borders::ALL).border_style(style);
+            let inner = block.inner(box_area);
+            f.render_widget(block, box_area);
+
+            f.render_widget(
+                Paragraph::new(text)
+                    .alignment(Alignment::Center)
+                    .style(style),
+                inner,
+            );
+        }
+        NotePosition::Over => {
+            let min_x = start_x.min(end_x);
+            let max_x = start_x.max(end_x);
+            let span_width = max_x.saturating_sub(min_x);
+            let over_box_width = span_width.max(text_width + 2) + 2;
+            let over_box_x = if span_width > 0 {
+                min_x.saturating_sub(1)
+            } else {
+                min_x.saturating_sub(over_box_width / 2)
+            };
+
+            let box_area = Rect {
+                x: over_box_x,
+                y: y.saturating_sub(1),
+                width: over_box_width,
+                height: 3,
+            };
+
+            f.render_widget(Clear, box_area);
+
+            let block = Block::default().borders(Borders::ALL).border_style(style);
+
+            let inner = block.inner(box_area);
+            f.render_widget(block, box_area);
+
+            f.render_widget(
+                Paragraph::new(text)
+                    .alignment(Alignment::Center)
+                    .style(style),
+                inner,
             );
         }
     }
