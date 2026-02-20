@@ -60,8 +60,8 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `Enter` | Edit selected |
 | `r` | Rename selected |
 | `d` | Delete selected |
-| `E` | Export to Mermaid |
 | `C` | Clear diagram |
+| `E` | Export to Mermaid |
 | `?` | Help |
 | `Ctrl+c` | Quit |
 

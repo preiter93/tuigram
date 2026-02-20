@@ -341,32 +341,6 @@ fn global_keybindings(world: &mut World) {
         },
     );
 
-    kb.bind(GLOBAL, 'C', "Clear diagram", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode == EditorMode::Normal {
-            let diagram = world.get::<SequenceDiagram>();
-            if !diagram.participants.is_empty() || !diagram.events.is_empty() {
-                world.get_mut::<EditorState>().mode = EditorMode::ConfirmClear;
-            }
-        }
-    });
-
-    kb.bind(GLOBAL, 'E', "Export Mermaid", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode == EditorMode::Normal {
-            let diagram = world.get::<SequenceDiagram>();
-            let mermaid = diagram.to_mermaid();
-            match fs::write("diagram.mmd", &mermaid) {
-                Ok(()) => world
-                    .get_mut::<EditorState>()
-                    .set_status("Exported to diagram.mmd"),
-                Err(e) => world
-                    .get_mut::<EditorState>()
-                    .set_status(format!("Export failed: {e}")),
-            }
-        }
-    });
-
     kb.bind(GLOBAL, KeyBinding::key(KeyCode::Enter), "Edit", |world| {
         let mode = world.get::<EditorState>().mode.clone();
         if mode != EditorMode::Normal {
@@ -476,6 +450,32 @@ fn global_keybindings(world: &mut World) {
                 }
             }
             Selection::None => {}
+        }
+    });
+
+    kb.bind(GLOBAL, 'C', "Clear diagram", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::Normal {
+            let diagram = world.get::<SequenceDiagram>();
+            if !diagram.participants.is_empty() || !diagram.events.is_empty() {
+                world.get_mut::<EditorState>().mode = EditorMode::ConfirmClear;
+            }
+        }
+    });
+
+    kb.bind(GLOBAL, 'E', "Export to Mermaid", |world| {
+        let mode = world.get::<EditorState>().mode.clone();
+        if mode == EditorMode::Normal {
+            let diagram = world.get::<SequenceDiagram>();
+            let mermaid = diagram.to_mermaid();
+            match fs::write("diagram.mmd", &mermaid) {
+                Ok(()) => world
+                    .get_mut::<EditorState>()
+                    .set_status("Exported to diagram.mmd"),
+                Err(e) => world
+                    .get_mut::<EditorState>()
+                    .set_status(format!("Export failed: {e}")),
+            }
         }
     });
 

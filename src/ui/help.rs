@@ -10,7 +10,7 @@ use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
 
-const HELP_WIDTH: u16 = 58;
+const HELP_WIDTH: u16 = 37;
 
 pub fn render_help(
     frame: &mut Frame,
