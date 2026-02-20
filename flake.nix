@@ -23,7 +23,7 @@
         packages = {
           tuigram = pkgs.rustPlatform.buildRustPackage {
             pname = "tuigram";
-            version = "0.1.3";
+            version = "0.1.4";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
 
