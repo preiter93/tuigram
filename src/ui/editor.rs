@@ -112,7 +112,7 @@ impl EditorState {
 
     pub fn get_status(&self) -> Option<&str> {
         self.status_message.as_ref().and_then(|s| {
-            if s.created_at.elapsed().as_millis() < 800 {
+            if s.created_at.elapsed().as_millis() < 1000 {
                 Some(s.text.as_str())
             } else {
                 None
