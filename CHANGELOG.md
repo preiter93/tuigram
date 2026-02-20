@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-02-20
+
+### 🚀 Features
+
+- *(events)* Add support for notes
+- *(events)* Change 'e' to 'm' for add message keybinding
+- *(events)* Render with filled background
+- *(export)* Extend notification time to 1s
+- *(events)* Use single line height for notes
+- *(events)* Insert messages and notes after selected event
+- *(keybindings)* Insert messages/notes before or after selected event
+- *(keybindings)* Move events/participants with shift+arrow
+- *(help)* Reorder help entries
+
+### 🐛 Bug Fixes
+
+- *(lint)* Satisfy clippy
+- *(ci)* Fail lint on warning
+
+### 📚 Documentation
+
+- *(demo)* Update demo
+- *(demo)* Update demo
+
 ## [0.1.3] - 2026-02-19
 
 ### 🚀 Features
