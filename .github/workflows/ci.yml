@@ -27,7 +27,7 @@ jobs:
           components: clippy
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
-      - run: cargo clippy -- -W clippy::pedantic
+      - run: cargo clippy -- -D clippy::pedantic
 
   check:
     runs-on: ubuntu-latest
