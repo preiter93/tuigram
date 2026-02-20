@@ -22,6 +22,14 @@ impl SequenceDiagram {
         }
     }
 
+    pub fn insert_message(&mut self, after_index: usize, from: usize, to: usize, text: String) {
+        if from < self.participants.len() && to < self.participants.len() {
+            let insert_at = (after_index + 1).min(self.events.len());
+            self.events
+                .insert(insert_at, Event::Message { from, to, text });
+        }
+    }
+
     pub fn add_note(
         &mut self,
         position: NotePosition,
@@ -37,6 +45,29 @@ impl SequenceDiagram {
                 participant_end,
                 text,
             });
+        }
+    }
+
+    pub fn insert_note(
+        &mut self,
+        after_index: usize,
+        position: NotePosition,
+        participant_start: usize,
+        participant_end: usize,
+        text: String,
+    ) {
+        if participant_start < self.participants.len() && participant_end < self.participants.len()
+        {
+            let insert_at = (after_index + 1).min(self.events.len());
+            self.events.insert(
+                insert_at,
+                Event::Note {
+                    position,
+                    participant_start,
+                    participant_end,
+                    text,
+                },
+            );
         }
     }
 

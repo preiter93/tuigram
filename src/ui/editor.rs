@@ -82,6 +82,7 @@ pub struct EditorState {
     pub note_position: NotePosition,
     pub note_participant_start: Option<usize>,
     pub note_participant_end: Option<usize>,
+    pub insert_after_index: Option<usize>,
 }
 
 impl EditorState {
@@ -100,6 +101,7 @@ impl EditorState {
         self.note_position = NotePosition::default();
         self.note_participant_start = None;
         self.note_participant_end = None;
+        self.insert_after_index = None;
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
