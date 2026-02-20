@@ -11,7 +11,7 @@ Output demo.gif
 Require tuigram
 
 Set Shell "bash"
-Set FontSize 16
+Set FontSize 15
 Set Width 1000
 Set Height 600
 Set Padding 20
@@ -94,6 +94,20 @@ Sleep 400ms
 Enter
 Sleep 400ms
 Type "Check Permissions"
+Sleep 300ms
+Enter
+Sleep 800ms
+
+# Note right of Auth: Validates JWT
+Type "n"
+Sleep 600ms
+Down Down
+Sleep 300ms
+Enter
+Sleep 400ms
+Enter
+Sleep 400ms
+Type "Validates JWT"
 Sleep 300ms
 Enter
 Sleep 800ms
