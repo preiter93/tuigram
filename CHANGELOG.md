@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-02-21
+
+### 🚀 Features
+
+- *(keybindings)* Enter edit mode with `e`
+- *(help)* Group help entries into categories
+
+### 📚 Documentation
+
+- *(readme)* Add a note that shift+↑/↓ may not work in all terminals
+- *(readme,help)* Replace "event" with "message/note" in keybindings
+- *(demo)* Update demo
+
+### 🔧 Refactor
+
+- *(app)* Split keybindings into separate widget IDs
+- *(clippy)* Define some lint exceptions globally
+
+### Build
+
+- *(deps)* Update dependencies
+
 ## [0.1.4] - 2026-02-20
 
 ### 🚀 Features
