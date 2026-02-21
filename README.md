@@ -56,7 +56,7 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `h/l` or `←/→` | Navigate left/right (participants) |
 | `j/k` or `↓/↑` | Navigate down/up (events) |
 | `H/L` or `Shift+←/→` | Move participant left/right, reverse event arrow |
-| `J/K` or `Shift+↓/↑` | Move event up/down |
+| `J/K` or `Shift+↓/↑` | Move event up/down* |
 | `Enter` | Edit selected |
 | `r` | Rename selected |
 | `d` | Delete selected |
@@ -64,6 +64,8 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `E` | Export to Mermaid |
 | `?` | Help |
 | `Ctrl+c` | Quit |
+
+> \* `Shift+↑/↓` may not work in all terminals, some intercept these for scrollback. Use `J`/`K` instead.
 
 ## Mermaid
 

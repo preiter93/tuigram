@@ -214,7 +214,6 @@ fn global_keybindings(world: &mut World) {
         let event_count = diagram.event_count();
         let selection = world.get::<EditorState>().selection;
 
-        // Remember participant index before moving to events
         if let Selection::Participant(idx) = selection {
             world.get_mut::<EditorState>().last_participant_index = Some(idx);
         }
