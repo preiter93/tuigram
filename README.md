@@ -54,9 +54,9 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `m/M` | Insert message after/before selected |
 | `n/N` | Insert note after/before selected |
 | `h/l` or `←/→` | Navigate left/right (participants) |
-| `j/k` or `↓/↑` | Navigate down/up (events) |
-| `H/L` or `Shift+←/→` | Move participant left/right, reverse event arrow |
-| `J/K` or `Shift+↓/↑` | Move event up/down* |
+| `j/k` or `↓/↑` | Navigate down/up (messages/notes) |
+| `H/L` or `Shift+←/→` | Move participant left/right, reverse message arrow |
+| `J/K` or `Shift+↓/↑` | Move message/note up/down* |
 | `Enter` | Edit selected |
 | `r` | Rename selected |
 | `d` | Delete selected |

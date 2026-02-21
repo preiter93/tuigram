@@ -302,7 +302,7 @@ fn global_keybindings(world: &mut World) {
     kb.bind_many(
         GLOBAL,
         keys!['J', KeyBinding::new(KeyCode::Down, KeyModifiers::SHIFT)],
-        "Move event down",
+        "Move message/note down",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
@@ -323,7 +323,7 @@ fn global_keybindings(world: &mut World) {
     kb.bind_many(
         GLOBAL,
         keys!['K', KeyBinding::new(KeyCode::Up, KeyModifiers::SHIFT)],
-        "Move event up",
+        "Move message/note up",
         |world| {
             let mode = world.get::<EditorState>().mode.clone();
             if mode != EditorMode::Normal {
