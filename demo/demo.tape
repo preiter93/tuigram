@@ -179,11 +179,11 @@ Sleep 1.5s
 # Clear selection and select first participant
 Escape
 Sleep 400ms
-Type "l"
+Right
 Sleep 400ms
-Type "l"
+Right
 Sleep 400ms
-Type "l"
+Right
 Sleep 400ms
 
 # Move participant with H/L
@@ -193,9 +193,9 @@ Type "L"
 Sleep 500ms
 
 # Navigate to an event
-Type "j"
+Down
 Sleep 400ms
-Type "j"
+Down
 Sleep 400ms
 
 # Move event with J/K
