@@ -56,10 +56,6 @@ impl EditorMode {
                 | Self::EditNoteText
         )
     }
-
-    pub fn is_selecting_note_position(&self) -> bool {
-        matches!(self, Self::SelectNotePosition | Self::EditNotePosition)
-    }
 }
 
 #[derive(Clone)]
