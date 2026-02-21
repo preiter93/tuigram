@@ -1,5 +1,3 @@
-#![allow(clippy::too_many_lines)]
-
 use crate::{
     core::{Event, NotePosition, SequenceDiagram},
     render::render_sequence,
@@ -567,11 +565,6 @@ fn confirm_keybindings(world: &mut World) {
     });
 }
 
-#[allow(
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn handle_input_confirm(world: &mut World) {
     let mode = world.get::<EditorState>().mode.clone();
     match mode {
@@ -794,11 +787,6 @@ fn save_note_changes(world: &mut World) {
     world.get_mut::<EditorState>().reset();
 }
 
-#[allow(
-    clippy::cast_possible_wrap,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn handle_participant_nav(world: &mut World, delta: i32) {
     let participant_count = world.get::<SequenceDiagram>().participant_count();
     if participant_count == 0 {
@@ -879,7 +867,6 @@ pub fn render(frame: &mut Frame, world: &mut World) {
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn render_empty_state(frame: &mut Frame, area: Rect, world: &World) {
     let theme = world.get::<Theme>();
     let block = Block::default()
@@ -941,7 +928,6 @@ fn render_empty_state(frame: &mut Frame, area: Rect, world: &World) {
     );
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
@@ -1027,7 +1013,6 @@ fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn render_note_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
@@ -1086,7 +1071,6 @@ fn render_note_participant_selector(frame: &mut Frame, area: Rect, world: &World
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();

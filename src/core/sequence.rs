@@ -221,7 +221,6 @@ impl SequenceDiagram {
         lines.join("\n") + "\n"
     }
 
-    #[allow(clippy::too_many_lines)]
     pub fn from_mermaid(input: &str) -> Result<Self> {
         let mut diagram = SequenceDiagram::new();
         let mut lines = input.lines();

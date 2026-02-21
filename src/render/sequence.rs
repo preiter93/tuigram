@@ -1,5 +1,3 @@
-#![allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
-
 use ratatui::{
     Frame,
     layout::{Alignment, Margin, Rect},

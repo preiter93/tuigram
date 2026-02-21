@@ -12,7 +12,6 @@ use crate::{
     theme::Theme,
 };
 
-#[allow(clippy::too_many_lines)]
 pub fn render_input_popup(frame: &mut Frame, world: &World) {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
