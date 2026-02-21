@@ -10,28 +10,127 @@ use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
 
-const HELP_WIDTH: u16 = 37;
+const HELP_WIDTH: u16 = 44;
+
+struct HelpEntry {
+    keys: &'static str,
+    description: &'static str,
+}
+
+struct HelpSection {
+    title: &'static str,
+    entries: &'static [HelpEntry],
+}
+
+const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        title: "[Navigation]",
+        entries: &[
+            HelpEntry {
+                keys: "h/l, ←/→",
+                description: "Select participant",
+            },
+            HelpEntry {
+                keys: "j/k, ↓/↑",
+                description: "Select message/note",
+            },
+        ],
+    },
+    HelpSection {
+        title: "[Insert]",
+        entries: &[
+            HelpEntry {
+                keys: "p",
+                description: "Add participant",
+            },
+            HelpEntry {
+                keys: "m/M",
+                description: "Insert message after/before",
+            },
+            HelpEntry {
+                keys: "n/N",
+                description: "Insert note after/before",
+            },
+        ],
+    },
+    HelpSection {
+        title: "[Edit]",
+        entries: &[
+            HelpEntry {
+                keys: "e, Enter",
+                description: "Edit selected",
+            },
+            HelpEntry {
+                keys: "r",
+                description: "Rename selected",
+            },
+            HelpEntry {
+                keys: "d",
+                description: "Delete selected",
+            },
+            HelpEntry {
+                keys: "C",
+                description: "Clear diagram",
+            },
+        ],
+    },
+    HelpSection {
+        title: "[Move]",
+        entries: &[
+            HelpEntry {
+                keys: "H/L, ⇧←/→",
+                description: "Move participant",
+            },
+            HelpEntry {
+                keys: "J/K, ⇧↓/↑",
+                description: "Move message/note up/down",
+            },
+        ],
+    },
+    HelpSection {
+        title: "[Other]",
+        entries: &[
+            HelpEntry {
+                keys: "E",
+                description: "Export to Mermaid",
+            },
+            HelpEntry {
+                keys: "?",
+                description: "Toggle help",
+            },
+            HelpEntry {
+                keys: "Ctrl+c",
+                description: "Quit",
+            },
+        ],
+    },
+];
 
 pub fn render_help(
     frame: &mut Frame,
     area: Rect,
     theme: &Theme,
-    keybindings: &Keybindings,
-    active: &[WidgetId],
+    _keybindings: &Keybindings,
+    _active: &[WidgetId],
 ) {
-    let display = keybindings.display_for(active);
+    let mut lines: Vec<Line> = Vec::new();
 
-    let lines: Vec<Line> = display
-        .iter()
-        .map(|info| {
-            let keys = info.keys_display_compact();
-            Line::from(vec![
-                Span::styled(format!("{keys:>9}"), theme.key),
+    for (i, section) in HELP_SECTIONS.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::raw(""));
+        }
+
+        lines.push(Line::from(Span::styled(section.title, theme.muted)));
+
+        for entry in section.entries {
+            let spans = vec![
+                Span::styled(format!(" {:>10}", entry.keys), theme.key),
                 Span::raw("  "),
-                Span::styled(info.name, theme.text),
-            ])
-        })
-        .collect();
+                Span::styled(entry.description, theme.text),
+            ];
+            lines.push(Line::from(spans));
+        }
+    }
 
     let popup_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
 
