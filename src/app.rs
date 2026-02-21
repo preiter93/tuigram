@@ -340,62 +340,67 @@ fn global_keybindings(world: &mut World) {
         },
     );
 
-    kb.bind(GLOBAL, KeyBinding::key(KeyCode::Enter), "Edit", |world| {
-        let mode = world.get::<EditorState>().mode.clone();
-        if mode != EditorMode::Normal {
-            return;
-        }
+    kb.bind_many(
+        GLOBAL,
+        keys!['e', KeyBinding::key(KeyCode::Enter)],
+        "Edit",
+        |world| {
+            let mode = world.get::<EditorState>().mode.clone();
+            if mode != EditorMode::Normal {
+                return;
+            }
 
-        let selection = world.get::<EditorState>().selection;
-        match selection {
-            Selection::Event(idx) => {
-                let event_data = {
-                    let diagram = world.get::<SequenceDiagram>();
-                    diagram.events.get(idx).cloned()
-                };
-                match event_data {
-                    Some(Event::Message { from, to, text }) => {
-                        let editor = world.get_mut::<EditorState>();
-                        editor.editing_event_index = Some(idx);
-                        editor.message_from = Some(from);
-                        editor.message_to = Some(to);
-                        editor.input_buffer = text;
-                        editor.selected_index = from;
-                        editor.mode = EditorMode::EditSelectFrom;
+            let selection = world.get::<EditorState>().selection;
+            match selection {
+                Selection::Event(idx) => {
+                    let event_data = {
+                        let diagram = world.get::<SequenceDiagram>();
+                        diagram.events.get(idx).cloned()
+                    };
+                    match event_data {
+                        Some(Event::Message { from, to, text }) => {
+                            let editor = world.get_mut::<EditorState>();
+                            editor.editing_event_index = Some(idx);
+                            editor.message_from = Some(from);
+                            editor.message_to = Some(to);
+                            editor.input_buffer = text;
+                            editor.selected_index = from;
+                            editor.mode = EditorMode::EditSelectFrom;
+                        }
+                        Some(Event::Note {
+                            position,
+                            participant_start,
+                            participant_end,
+                            text,
+                        }) => {
+                            let editor = world.get_mut::<EditorState>();
+                            editor.editing_event_index = Some(idx);
+                            editor.note_position = position;
+                            editor.note_participant_start = Some(participant_start);
+                            editor.note_participant_end = Some(participant_end);
+                            editor.input_buffer = text;
+                            editor.selected_index = participant_start;
+                            editor.mode = EditorMode::EditNoteParticipant;
+                        }
+                        None => {}
                     }
-                    Some(Event::Note {
-                        position,
-                        participant_start,
-                        participant_end,
-                        text,
-                    }) => {
+                }
+                Selection::Participant(idx) => {
+                    let name = {
+                        let diagram = world.get::<SequenceDiagram>();
+                        diagram.participants.get(idx).cloned()
+                    };
+                    if let Some(name) = name {
                         let editor = world.get_mut::<EditorState>();
-                        editor.editing_event_index = Some(idx);
-                        editor.note_position = position;
-                        editor.note_participant_start = Some(participant_start);
-                        editor.note_participant_end = Some(participant_end);
-                        editor.input_buffer = text;
-                        editor.selected_index = participant_start;
-                        editor.mode = EditorMode::EditNoteParticipant;
+                        editor.selected_index = idx;
+                        editor.input_buffer = name;
+                        editor.mode = EditorMode::RenameParticipant;
                     }
-                    None => {}
                 }
+                Selection::None => {}
             }
-            Selection::Participant(idx) => {
-                let name = {
-                    let diagram = world.get::<SequenceDiagram>();
-                    diagram.participants.get(idx).cloned()
-                };
-                if let Some(name) = name {
-                    let editor = world.get_mut::<EditorState>();
-                    editor.selected_index = idx;
-                    editor.input_buffer = name;
-                    editor.mode = EditorMode::RenameParticipant;
-                }
-            }
-            Selection::None => {}
-        }
-    });
+        },
+    );
 
     kb.bind(GLOBAL, 'r', "Rename", |world| {
         let mode = world.get::<EditorState>().mode.clone();
