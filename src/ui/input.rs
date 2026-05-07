@@ -68,6 +68,7 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
             };
             (title.to_string(), Some(format!("{pos_str}:")))
         }
+        EditorMode::InputBoxLabel => ("Add Box".to_string(), Some("Label:".to_string())),
         _ => return,
     };
 

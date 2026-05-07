@@ -1,4 +1,5 @@
 use super::Selection;
+use crate::core::BoxColor;
 use crate::core::NotePosition;
 use std::time::Instant;
 
@@ -24,6 +25,10 @@ pub enum EditorMode {
     EditNotePosition,
     EditNoteEndParticipant,
     EditNoteText,
+    SelectBoxStart,
+    SelectBoxEnd,
+    SelectBoxColor,
+    InputBoxLabel,
 }
 
 impl EditorMode {
@@ -38,6 +43,8 @@ impl EditorMode {
                 | Self::SelectNoteEndParticipant
                 | Self::EditNoteParticipant
                 | Self::EditNoteEndParticipant
+                | Self::SelectBoxStart
+                | Self::SelectBoxEnd
         )
     }
 
@@ -54,6 +61,7 @@ impl EditorMode {
                 | Self::RenameParticipant
                 | Self::InputNoteText
                 | Self::EditNoteText
+                | Self::InputBoxLabel
         )
     }
 }
@@ -79,6 +87,9 @@ pub struct EditorState {
     pub note_participant_start: Option<usize>,
     pub note_participant_end: Option<usize>,
     pub insert_after_index: Option<usize>,
+    pub box_start: Option<usize>,
+    pub box_end: Option<usize>,
+    pub box_color: BoxColor,
 }
 
 impl EditorState {
@@ -98,6 +109,9 @@ impl EditorState {
         self.note_participant_start = None;
         self.note_participant_end = None;
         self.insert_after_index = None;
+        self.box_start = None;
+        self.box_end = None;
+        self.box_color = BoxColor::default();
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

@@ -1,13 +1,14 @@
 use ratatui::{
     Frame,
     layout::{Alignment, Margin, Rect},
+    style::{Color, Style},
     text::Line,
     widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation},
 };
 use tui_world::World;
 
 use crate::{
-    core::{Event, NotePosition, SequenceDiagram},
+    core::{BoxColor, Event, NotePosition, SequenceDiagram},
     theme::Theme,
     ui::{EditorState, FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, Selection, scroll::ScrollState},
 };
@@ -35,6 +36,8 @@ pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
     render_lifelines(f, area, world, &participants, lifeline_start);
     render_events(f, world, &participants, lifeline_start);
     render_scrollbar(f, area, world);
+    // Render box labels last so they sit on top of lifelines and events
+    render_box_labels(f, area, world, &participants);
 }
 
 fn render_scrollbar(f: &mut Frame, area: Rect, world: &World) {
@@ -68,6 +71,10 @@ fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
         .map(|i| spacing * (i as u16 + 1))
         .collect();
 
+    // Render box backgrounds FIRST (so participants appear on top)
+    render_participant_box_backgrounds(f, area, world, &positions);
+
+    // Then render individual participant boxes
     for (i, name) in diagram.participants.iter().enumerate() {
         let style = if selection == Selection::Participant(i) {
             theme.selected
@@ -95,6 +102,110 @@ fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
     }
 
     positions
+}
+
+fn render_participant_box_backgrounds(f: &mut Frame, area: Rect, world: &World, positions: &[u16]) {
+    let diagram = world.get::<SequenceDiagram>();
+
+    for b in &diagram.boxes {
+        if b.start >= positions.len() || b.end >= positions.len() {
+            continue;
+        }
+
+        let start_name = &diagram.participants[b.start];
+        let end_name = &diagram.participants[b.end];
+
+        let start_w = (start_name.len() as u16 + 4).min(area.width);
+        let end_w = (end_name.len() as u16 + 4).min(area.width);
+
+        let start_x = positions[b.start]
+            .saturating_sub(start_w / 2)
+            .min(area.width.saturating_sub(start_w));
+        let end_x = positions[b.end]
+            .saturating_sub(end_w / 2)
+            .min(area.width.saturating_sub(end_w));
+
+        let box_x = start_x.saturating_sub(1);
+        let box_right = (end_x + end_w + 1).min(area.width);
+        let box_width = box_right.saturating_sub(box_x);
+
+        if box_width == 0 {
+            continue;
+        }
+
+        let box_area = Rect {
+            x: area.x + box_x,
+            y: area.y,
+            width: box_width,
+            height: area.height,
+        };
+
+        let (bg_color, _label_color) = box_display_colors(b.color);
+
+        // Borderless full-height background fill
+        f.render_widget(
+            Block::default().style(Style::default().bg(bg_color)),
+            box_area,
+        );
+    }
+}
+
+fn render_box_labels(f: &mut Frame, area: Rect, world: &World, positions: &[u16]) {
+    let diagram = world.get::<SequenceDiagram>();
+
+    for b in &diagram.boxes {
+        if b.label.is_empty() || b.start >= positions.len() || b.end >= positions.len() {
+            continue;
+        }
+
+        let start_name = &diagram.participants[b.start];
+        let end_name = &diagram.participants[b.end];
+
+        let start_w = (start_name.len() as u16 + 4).min(area.width);
+        let end_w = (end_name.len() as u16 + 4).min(area.width);
+
+        let start_x = positions[b.start]
+            .saturating_sub(start_w / 2)
+            .min(area.width.saturating_sub(start_w));
+        let end_x = positions[b.end]
+            .saturating_sub(end_w / 2)
+            .min(area.width.saturating_sub(end_w));
+
+        let box_x = start_x.saturating_sub(1);
+        let box_right = (end_x + end_w + 1).min(area.width);
+        let box_width = box_right.saturating_sub(box_x);
+
+        if box_width == 0 || area.height == 0 {
+            continue;
+        }
+
+        let (bg_color, label_color) = box_display_colors(b.color);
+
+        f.render_widget(
+            Paragraph::new(b.label.as_str())
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(label_color).bg(bg_color)),
+            Rect {
+                x: area.x + box_x,
+                y: area.y + area.height - 1,
+                width: box_width,
+                height: 1,
+            },
+        );
+    }
+}
+
+fn box_display_colors(color: BoxColor) -> (Color, Color) {
+    match color {
+        BoxColor::Blue => (Color::Rgb(20, 50, 100), Color::Rgb(100, 150, 220)),
+        BoxColor::Green => (Color::Rgb(20, 70, 30), Color::Rgb(80, 180, 100)),
+        BoxColor::Red => (Color::Rgb(100, 20, 20), Color::Rgb(220, 80, 80)),
+        BoxColor::Yellow => (Color::Rgb(70, 60, 10), Color::Rgb(200, 180, 50)),
+        BoxColor::Orange => (Color::Rgb(90, 45, 10), Color::Rgb(220, 130, 50)),
+        BoxColor::Purple => (Color::Rgb(70, 20, 90), Color::Rgb(170, 80, 200)),
+        BoxColor::Aqua => (Color::Rgb(10, 70, 80), Color::Rgb(60, 190, 200)),
+        BoxColor::Gray => (Color::Rgb(45, 45, 45), Color::Rgb(150, 150, 150)),
+    }
 }
 
 fn render_lifelines(

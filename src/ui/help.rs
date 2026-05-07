@@ -88,6 +88,19 @@ const HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
+        title: "[Box]",
+        entries: &[
+            HelpEntry {
+                keys: "b",
+                description: "Add box",
+            },
+            HelpEntry {
+                keys: "B",
+                description: "Remove box at participant",
+            },
+        ],
+    },
+    HelpSection {
         title: "[Other]",
         entries: &[
             HelpEntry {

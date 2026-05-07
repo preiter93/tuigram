@@ -37,6 +37,10 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
             ("SELECT END", theme.status_select)
         }
         EditorMode::InputNoteText | EditorMode::EditNoteText => ("NOTE", theme.status_input),
+        EditorMode::SelectBoxStart => ("BOX START", theme.status_select),
+        EditorMode::SelectBoxEnd => ("BOX END", theme.status_select),
+        EditorMode::SelectBoxColor => ("BOX COLOR", theme.status_select),
+        EditorMode::InputBoxLabel => ("BOX LABEL", theme.status_input),
     };
 
     let hints = match mode {
@@ -48,9 +52,9 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
                     "p: participant  ?: help  Ctrl+c: quit"
                 }
             } else if has_selection {
-                "p: participant  m: message  n: note  d: delete  ?: help  Ctrl+c: quit"
+                "p: participant  m: message  n: note  b: box  d: delete  ?: help  Ctrl+c: quit"
             } else {
-                "p: participant  m: message  n: note  ?: help  Ctrl+c: quit"
+                "p: participant  m: message  n: note  b: box  ?: help  Ctrl+c: quit"
             }
         }
         EditorMode::InputParticipant
@@ -58,7 +62,8 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         | EditorMode::EditMessage
         | EditorMode::RenameParticipant
         | EditorMode::InputNoteText
-        | EditorMode::EditNoteText => "Enter: confirm  Esc: cancel",
+        | EditorMode::EditNoteText
+        | EditorMode::InputBoxLabel => "Enter: confirm  Esc: cancel",
         EditorMode::SelectFrom
         | EditorMode::SelectTo
         | EditorMode::EditSelectFrom
@@ -66,10 +71,13 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         | EditorMode::SelectNoteParticipant
         | EditorMode::SelectNoteEndParticipant
         | EditorMode::EditNoteParticipant
-        | EditorMode::EditNoteEndParticipant => "↑↓: navigate  Enter: select  Esc: cancel",
+        | EditorMode::EditNoteEndParticipant
+        | EditorMode::SelectBoxStart
+        | EditorMode::SelectBoxEnd => "↑↓: navigate  Enter: select  Esc: cancel",
         EditorMode::SelectNotePosition | EditorMode::EditNotePosition => {
             "↑↓: change position  Enter: confirm  Esc: cancel"
         }
+        EditorMode::SelectBoxColor => "↑↓: change color  Enter: confirm  Esc: cancel",
         EditorMode::Help => "?: close",
         EditorMode::ConfirmClear => "y/Enter: confirm  n/Esc: cancel",
     };

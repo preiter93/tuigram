@@ -1,5 +1,5 @@
 use crate::{
-    core::{Event, NotePosition, SequenceDiagram},
+    core::{BoxColor, Event, NotePosition, SequenceDiagram},
     render::render_sequence,
     theme::Theme,
     ui::{
@@ -23,6 +23,7 @@ pub const CONFIRM: WidgetId = WidgetId("Confirm");
 pub const TEXT_INPUT: WidgetId = WidgetId("TextInput");
 pub const SELECT_PARTICIPANT: WidgetId = WidgetId("SelectParticipant");
 pub const SELECT_POSITION: WidgetId = WidgetId("SelectPosition");
+pub const SELECT_BOX_COLOR: WidgetId = WidgetId("SelectBoxColor");
 
 #[derive(Default)]
 pub struct AppState {
@@ -42,6 +43,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram) {
     select_position_keybindings(world);
     text_input_keybindings(world);
     confirm_keybindings(world);
+    select_box_color_keybindings(world);
 }
 
 fn normal_keybindings(world: &mut World) {
@@ -126,6 +128,51 @@ fn normal_keybindings(world: &mut World) {
             editor.note_participant_start = None;
             editor.note_participant_end = None;
             editor.insert_after_index = insert_after;
+        }
+    });
+
+    kb.bind(NORMAL, 'd', "Delete selected", |world| {
+        let selection = world.get::<EditorState>().selection;
+        match selection {
+            Selection::Participant(idx) => {
+                world.get_mut::<SequenceDiagram>().remove_participant(idx);
+                let new_count = world.get::<SequenceDiagram>().participant_count();
+                let editor = world.get_mut::<EditorState>();
+                if new_count == 0 {
+                    editor.clear_selection();
+                } else {
+                    editor.selection = Selection::Participant(idx.min(new_count - 1));
+                }
+            }
+            Selection::Event(idx) => {
+                world.get_mut::<SequenceDiagram>().remove_event(idx);
+                let new_count = world.get::<SequenceDiagram>().event_count();
+                let editor = world.get_mut::<EditorState>();
+                if new_count == 0 {
+                    editor.clear_selection();
+                } else {
+                    editor.selection = Selection::Event(idx.min(new_count - 1));
+                }
+            }
+            Selection::None => {
+                world.get_mut::<SequenceDiagram>().events.pop();
+            }
+        }
+    });
+
+    kb.bind(NORMAL, 'B', "Remove box", |world| {
+        let selection = world.get::<EditorState>().selection;
+        if let Selection::Participant(idx) = selection {
+            let box_idx = world
+                .get::<SequenceDiagram>()
+                .boxes
+                .iter()
+                .position(|b| b.start <= idx && idx <= b.end);
+            if let Some(box_idx) = box_idx {
+                world.get_mut::<SequenceDiagram>().remove_box_at(box_idx);
+            } else {
+                world.get_mut::<EditorState>().set_status("No box here");
+            }
         }
     });
 
@@ -388,6 +435,21 @@ fn normal_keybindings(world: &mut World) {
         }
     });
 
+    kb.bind(NORMAL, 'b', "Add box", |world| {
+        let participant_count = world.get::<SequenceDiagram>().participant_count();
+        if participant_count >= 1 {
+            let selection = world.get::<EditorState>().selection;
+            let editor = world.get_mut::<EditorState>();
+            editor.mode = EditorMode::SelectBoxStart;
+            editor.selected_index = match selection {
+                Selection::Participant(idx) => idx,
+                _ => 0,
+            };
+            editor.box_start = None;
+            editor.box_end = None;
+        }
+    });
+
     kb.bind(NORMAL, 'C', "Clear diagram", |world| {
         let diagram = world.get::<SequenceDiagram>();
         if !diagram.participants.is_empty() || !diagram.events.is_empty() {
@@ -557,12 +619,53 @@ fn confirm_keybindings(world: &mut World) {
         let diagram = world.get_mut::<SequenceDiagram>();
         diagram.participants.clear();
         diagram.events.clear();
+        diagram.boxes.clear();
         world.get_mut::<EditorState>().reset();
     });
 
     kb.bind_many(CONFIRM, keys!['n', KeyCode::Esc], "No", |world| {
         world.get_mut::<EditorState>().reset();
     });
+}
+
+fn select_box_color_keybindings(world: &mut World) {
+    let kb = world.get_mut::<Keybindings>();
+
+    kb.bind(
+        SELECT_BOX_COLOR,
+        KeyBinding::key(KeyCode::Enter),
+        "Confirm",
+        handle_input_confirm,
+    );
+
+    kb.bind(
+        SELECT_BOX_COLOR,
+        KeyBinding::key(KeyCode::Esc),
+        "Cancel",
+        |world| {
+            world.get_mut::<EditorState>().reset();
+        },
+    );
+
+    kb.bind_many(
+        SELECT_BOX_COLOR,
+        keys!['h', 'k', KeyCode::Left, KeyCode::Up],
+        "Previous",
+        |world| {
+            let editor = world.get_mut::<EditorState>();
+            editor.box_color = editor.box_color.prev();
+        },
+    );
+
+    kb.bind_many(
+        SELECT_BOX_COLOR,
+        keys!['j', 'l', KeyCode::Right, KeyCode::Down],
+        "Next",
+        |world| {
+            let editor = world.get_mut::<EditorState>();
+            editor.box_color = editor.box_color.next();
+        },
+    );
 }
 
 fn handle_input_confirm(world: &mut World) {
@@ -734,6 +837,47 @@ fn handle_input_confirm(world: &mut World) {
         EditorMode::EditNoteText => {
             save_note_changes(world);
         }
+        EditorMode::SelectBoxStart => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.box_start = Some(selected);
+            editor.mode = EditorMode::SelectBoxEnd;
+            editor.selected_index = selected;
+        }
+        EditorMode::SelectBoxEnd => {
+            let selected = world.get::<EditorState>().selected_index;
+            let editor = world.get_mut::<EditorState>();
+            editor.box_end = Some(selected);
+            editor.box_color = BoxColor::default();
+            editor.mode = EditorMode::SelectBoxColor;
+        }
+        EditorMode::SelectBoxColor => {
+            let editor = world.get_mut::<EditorState>();
+            editor.mode = EditorMode::InputBoxLabel;
+            editor.input_buffer.clear();
+        }
+        EditorMode::InputBoxLabel => {
+            let editor_state = world.get::<EditorState>().clone();
+            let label = editor_state.input_buffer.trim().to_string();
+            if let (Some(mut start), Some(mut end)) = (editor_state.box_start, editor_state.box_end)
+            {
+                if start > end {
+                    std::mem::swap(&mut start, &mut end);
+                }
+                let ok = world.get_mut::<SequenceDiagram>().add_box(
+                    label,
+                    editor_state.box_color,
+                    start,
+                    end,
+                );
+                if !ok {
+                    world
+                        .get_mut::<EditorState>()
+                        .set_status("Boxes cannot overlap");
+                }
+            }
+            world.get_mut::<EditorState>().reset();
+        }
         _ => {}
     }
 }
@@ -805,6 +949,7 @@ pub fn active_widgets(world: &World) -> Vec<WidgetId> {
         EditorMode::Normal | EditorMode::Help => vec![NORMAL],
         EditorMode::ConfirmClear => vec![CONFIRM],
         EditorMode::SelectNotePosition | EditorMode::EditNotePosition => vec![SELECT_POSITION],
+        EditorMode::SelectBoxColor => vec![SELECT_BOX_COLOR],
         m if m.is_selecting_participant() => vec![SELECT_PARTICIPANT],
         m if m.is_text_input() => vec![TEXT_INPUT],
         _ => vec![],
@@ -838,7 +983,8 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         | EditorMode::EditMessage
         | EditorMode::RenameParticipant
         | EditorMode::InputNoteText
-        | EditorMode::EditNoteText => {
+        | EditorMode::EditNoteText
+        | EditorMode::InputBoxLabel => {
             render_input_popup(frame, world);
         }
         EditorMode::SelectFrom
@@ -862,6 +1008,12 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         }
         EditorMode::ConfirmClear => {
             render_confirm_dialog(frame, world);
+        }
+        EditorMode::SelectBoxStart | EditorMode::SelectBoxEnd => {
+            render_box_participant_selector(frame, area, world);
+        }
+        EditorMode::SelectBoxColor => {
+            render_box_color_selector(frame, area, world);
         }
         EditorMode::Normal => {}
     }
@@ -1122,6 +1274,151 @@ fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
                 height: 1,
             },
         );
+    }
+}
+
+fn render_box_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
+    let editor = world.get::<EditorState>();
+    let diagram = world.get::<SequenceDiagram>();
+    let theme = world.get::<Theme>();
+
+    let participants = &diagram.participants;
+    let cursor = editor.selected_index;
+    let is_selecting_end = matches!(editor.mode, EditorMode::SelectBoxEnd);
+    let box_start = editor.box_start;
+
+    let popup_width = 40.min(area.width.saturating_sub(4));
+    let popup_height = (participants.len() as u16 + 4).min(area.height.saturating_sub(4));
+
+    let popup_area = centered_rect(popup_width, popup_height, area);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let title = if is_selecting_end {
+        " Box: End Participant "
+    } else {
+        " Box: Start Participant "
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme.border);
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    for (i, name) in participants.iter().enumerate() {
+        if i as u16 >= inner.height {
+            break;
+        }
+
+        let y = inner.y + i as u16;
+        let is_cursor = cursor == i;
+        let is_start_marker = is_selecting_end && box_start == Some(i);
+
+        let prefix = if is_cursor { "\u{25b6} " } else { "  " };
+        let style = if is_cursor {
+            theme.selected
+        } else if is_start_marker {
+            theme.accent
+        } else {
+            theme.text
+        };
+
+        frame.render_widget(
+            Paragraph::new(format!("{prefix}{name}")).style(style),
+            Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+}
+
+fn render_box_color_selector(frame: &mut Frame, area: Rect, world: &World) {
+    use ratatui::style::Style;
+    let editor = world.get::<EditorState>();
+    let theme = world.get::<Theme>();
+
+    let current_color = editor.box_color;
+    let colors = BoxColor::all();
+
+    let popup_width = 30.min(area.width.saturating_sub(4));
+    let popup_height = (colors.len() as u16 + 4).min(area.height.saturating_sub(4));
+
+    let popup_area = centered_rect(popup_width, popup_height, area);
+
+    frame.render_widget(ratatui::widgets::Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Box Color ")
+        .borders(Borders::ALL)
+        .border_style(theme.border);
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    for (i, color) in colors.iter().enumerate() {
+        let y = inner.y + i as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+
+        let is_selected = *color == current_color;
+        let swatch_color = box_swatch_color(*color);
+        let prefix = if is_selected { "\u{25b6} " } else { "  " };
+        let name_style = if is_selected {
+            theme.selected
+        } else {
+            theme.text
+        };
+
+        let line = Line::from(vec![
+            Span::raw(prefix),
+            Span::styled("\u{25a0} ", Style::default().fg(swatch_color)),
+            Span::styled(color.as_mermaid_str(), name_style),
+        ]);
+
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+
+    if inner.height > colors.len() as u16 {
+        let hint_y = inner.y + inner.height - 1;
+        frame.render_widget(
+            Paragraph::new("Enter: confirm | Esc: cancel")
+                .style(theme.muted)
+                .alignment(Alignment::Right),
+            Rect {
+                x: inner.x,
+                y: hint_y,
+                width: inner.width,
+                height: 1,
+            },
+        );
+    }
+}
+
+fn box_swatch_color(color: BoxColor) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    match color {
+        BoxColor::Blue => Color::Rgb(100, 150, 220),
+        BoxColor::Green => Color::Rgb(80, 180, 100),
+        BoxColor::Red => Color::Rgb(220, 80, 80),
+        BoxColor::Yellow => Color::Rgb(200, 180, 50),
+        BoxColor::Orange => Color::Rgb(220, 130, 50),
+        BoxColor::Purple => Color::Rgb(170, 80, 200),
+        BoxColor::Aqua => Color::Rgb(60, 190, 200),
+        BoxColor::Gray => Color::Rgb(150, 150, 150),
     }
 }
 

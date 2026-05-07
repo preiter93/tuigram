@@ -1,15 +1,48 @@
-use super::models::{Event, NotePosition};
+use super::models::{BoxColor, Event, NotePosition, ParticipantBox};
 use anyhow::{Result, bail};
 
 #[derive(Default, Clone)]
 pub struct SequenceDiagram {
     pub participants: Vec<String>,
     pub events: Vec<Event>,
+    pub boxes: Vec<ParticipantBox>,
 }
 
 impl SequenceDiagram {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn add_box(&mut self, label: String, color: BoxColor, start: usize, end: usize) -> bool {
+        if start >= self.participants.len() || end >= self.participants.len() || start > end {
+            return false;
+        }
+        // Reject if this range overlaps any existing box.
+        let overlaps = self.boxes.iter().any(|b| start <= b.end && b.start <= end);
+        if overlaps {
+            return false;
+        }
+        self.boxes.push(ParticipantBox {
+            label,
+            color,
+            start,
+            end,
+        });
+        self.boxes.sort_by_key(|b| b.start);
+        true
+    }
+
+    pub fn remove_box_at(&mut self, idx: usize) {
+        if idx < self.boxes.len() {
+            self.boxes.remove(idx);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn box_for_participant(&self, participant_idx: usize) -> Option<&ParticipantBox> {
+        self.boxes
+            .iter()
+            .find(|b| b.start <= participant_idx && participant_idx <= b.end)
     }
 
     pub fn add_participant(&mut self, name: String) {
@@ -177,13 +210,52 @@ impl SequenceDiagram {
                 }
             }
         }
+
+        let mut new_boxes: Vec<ParticipantBox> = Vec::new();
+        for mut b in self.boxes.drain(..) {
+            if b.start == idx && b.end == idx {
+                continue;
+            }
+            if b.end >= idx {
+                b.end = b.end.saturating_sub(1);
+            }
+            if b.start > idx {
+                b.start -= 1;
+            }
+            if b.start <= b.end {
+                new_boxes.push(b);
+            }
+        }
+
+        self.boxes = new_boxes;
     }
 
     pub fn to_mermaid(&self) -> String {
         let mut lines = vec!["sequenceDiagram".to_string()];
 
-        for name in &self.participants {
-            lines.push(format!("    participant {name}"));
+        let mut i = 0;
+        while i < self.participants.len() {
+            if let Some(b) = self.boxes.iter().find(|b| b.start == i) {
+                let color = b.color.as_mermaid_str();
+                if b.label.is_empty() {
+                    lines.push(format!("    box {color}"));
+                } else {
+                    lines.push(format!("    box {color} {}", b.label));
+                }
+                let box_end = b.end;
+                for j in i..=box_end {
+                    if let Some(name) = self.participants.get(j) {
+                        lines.push(format!("        participant {name}"));
+                    }
+                }
+                lines.push("    end".to_string());
+                i = box_end + 1;
+            } else {
+                if let Some(name) = self.participants.get(i) {
+                    lines.push(format!("    participant {name}"));
+                }
+                i += 1;
+            }
         }
 
         for event in &self.events {
@@ -229,6 +301,8 @@ impl SequenceDiagram {
         if first_line != "sequenceDiagram" {
             bail!("First line must be 'sequenceDiagram'");
         }
+
+        let mut current_box: Option<(BoxColor, String, usize)> = None;
 
         for line in lines {
             let trimmed = line.trim();
@@ -368,6 +442,43 @@ impl SequenceDiagram {
                 continue;
             }
 
+            // Parse box block header
+            if trimmed == "box" || trimmed.starts_with("box ") {
+                let rest = trimmed.strip_prefix("box").unwrap().trim();
+                let (color, label) = if rest.is_empty() {
+                    (BoxColor::default(), String::new())
+                } else {
+                    let (first_word, remainder) = rest
+                        .split_once(|c: char| c.is_whitespace())
+                        .map_or((rest, ""), |(f, r)| (f, r.trim()));
+                    if let Some(c) = BoxColor::from_mermaid_str(first_word) {
+                        (c, remainder.to_string())
+                    } else {
+                        (BoxColor::default(), rest.to_string())
+                    }
+                };
+                current_box = Some((color, label, diagram.participants.len()));
+                continue;
+            }
+
+            // Parse box block end
+            if trimmed == "end" {
+                if let Some((color, label, start)) = current_box.take() {
+                    let end = diagram.participants.len().saturating_sub(1);
+                    if end >= start {
+                        diagram.boxes.push(ParticipantBox {
+                            label,
+                            color,
+                            start,
+                            end,
+                        });
+                    }
+                } else {
+                    bail!("Unexpected 'end'");
+                }
+                continue;
+            }
+
             bail!("Unsupported mermaid feature: {trimmed}");
         }
 
@@ -378,6 +489,88 @@ impl SequenceDiagram {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_box_roundtrip() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_participant("Bob".to_string());
+        diagram.add_participant("Carol".to_string());
+        diagram.add_box("Frontend".to_string(), BoxColor::Blue, 0, 1);
+        diagram.add_message(0, 1, "Hello".to_string());
+
+        let mermaid = diagram.to_mermaid();
+        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
+
+        assert_eq!(parsed.participants, diagram.participants);
+        assert_eq!(parsed.boxes.len(), 1);
+        assert_eq!(parsed.boxes[0].label, "Frontend");
+        assert_eq!(parsed.boxes[0].color, BoxColor::Blue);
+        assert_eq!(parsed.boxes[0].start, 0);
+        assert_eq!(parsed.boxes[0].end, 1);
+    }
+
+    #[test]
+    fn test_box_remove_participant() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_participant("Bob".to_string());
+        diagram.add_participant("Carol".to_string());
+        diagram.add_box("Group".to_string(), BoxColor::Green, 0, 2);
+
+        diagram.remove_participant(0); // remove Alice
+        assert_eq!(diagram.boxes.len(), 1);
+        assert_eq!(diagram.boxes[0].start, 0);
+        assert_eq!(diagram.boxes[0].end, 1);
+
+        diagram.remove_participant(1); // remove Carol (now at index 1)
+        assert_eq!(diagram.boxes.len(), 1);
+        assert_eq!(diagram.boxes[0].start, 0);
+        assert_eq!(diagram.boxes[0].end, 0);
+    }
+
+    #[test]
+    fn test_box_no_label() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_participant("Bob".to_string());
+        diagram.add_box(String::new(), BoxColor::Red, 0, 1);
+
+        let mermaid = diagram.to_mermaid();
+        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
+
+        assert_eq!(parsed.boxes.len(), 1);
+        assert_eq!(parsed.boxes[0].color, BoxColor::Red);
+        assert_eq!(parsed.boxes[0].label, "");
+    }
+
+    #[test]
+    fn test_box_remove_single_participant() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_box("Solo".to_string(), BoxColor::Purple, 0, 0);
+        assert_eq!(diagram.boxes.len(), 1);
+
+        diagram.remove_participant(0);
+        assert_eq!(
+            diagram.boxes.len(),
+            0,
+            "single-participant box should be dropped"
+        );
+    }
+
+    #[test]
+    fn test_box_for_participant() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice".to_string());
+        diagram.add_participant("Bob".to_string());
+        diagram.add_participant("Carol".to_string());
+        diagram.add_box("FE".to_string(), BoxColor::Blue, 0, 1);
+
+        assert!(diagram.box_for_participant(0).is_some());
+        assert!(diagram.box_for_participant(1).is_some());
+        assert!(diagram.box_for_participant(2).is_none());
+    }
 
     #[test]
     fn test_roundtrip() {
