@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6] - 2026-05-07
+
+### 🚀 Features
+
+- Document how to reverse arrow in help
+- Add participant box grouping with color support
+
+### 📚 Documentation
+
+- Extend demo recording to showcase participant boxes
+
+### ⚙️ Miscellaneous Tasks
+
+- *(gitignore)* Remove events diagram
+
 ## [0.1.5] - 2026-02-21
 
 ### 🚀 Features
