@@ -79,7 +79,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         entries: &[
             HelpEntry {
                 keys: "H/L, ⇧←/→",
-                description: "Move participant",
+                description: "Move participant/Reverse arrow",
             },
             HelpEntry {
                 keys: "J/K, ⇧↓/↑",
