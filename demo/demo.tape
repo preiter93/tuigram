@@ -176,6 +176,38 @@ Sleep 300ms
 Enter
 Sleep 1.5s
 
+# Group backend participants in a box
+Escape
+Sleep 500ms
+Type "b"
+Sleep 600ms
+Down
+Sleep 300ms
+Enter
+Sleep 400ms
+Down
+Sleep 300ms
+Down
+Sleep 300ms
+Enter
+Sleep 500ms
+Down
+Sleep 300ms
+Down
+Sleep 300ms
+Down
+Sleep 300ms
+Down
+Sleep 300ms
+Down
+Sleep 400ms
+Enter
+Sleep 400ms
+Type "Backend"
+Sleep 300ms
+Enter
+Sleep 1.5s
+
 # Clear selection and select first participant
 Escape
 Sleep 400ms
