@@ -53,6 +53,7 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `p` | Add participant |
 | `m/M` | Insert message after/before selected |
 | `n/N` | Insert note after/before selected |
+| `b/B` | Add/remove box around participants |
 | `h/l` or `←/→` | Navigate left/right (participants) |
 | `j/k` or `↓/↑` | Navigate down/up (messages/notes) |
 | `H/L` or `Shift+←/→` | Move participant left/right, reverse message arrow |
