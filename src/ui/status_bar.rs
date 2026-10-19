@@ -9,6 +9,8 @@ use tui_world::World;
 use super::{EditorMode, EditorState, Selection};
 use crate::{core::SequenceDiagram, theme::Theme};
 
+const DIRTY_HINTS: &str = "E: save  u: undo  ";
+
 pub fn render_status_bar(
     frame: &mut Frame,
     area: Rect,
@@ -47,6 +49,7 @@ pub fn render_status_bar(
         EditorMode::SelectBoxEnd => ("BOX END", theme.status_select),
         EditorMode::SelectBoxColor => ("BOX COLOR", theme.status_select),
         EditorMode::InputBoxLabel => ("BOX LABEL", theme.status_input),
+        EditorMode::InputSavePath => ("SAVE AS", theme.status_input),
     };
 
     let hints = match mode {
@@ -69,7 +72,8 @@ pub fn render_status_bar(
         | EditorMode::RenameParticipant
         | EditorMode::InputNoteText
         | EditorMode::EditNoteText
-        | EditorMode::InputBoxLabel => "Enter: confirm  Esc: cancel",
+        | EditorMode::InputBoxLabel
+        | EditorMode::InputSavePath => "Enter: confirm  Esc: cancel",
         EditorMode::SelectFrom
         | EditorMode::SelectTo
         | EditorMode::EditSelectFrom
@@ -84,7 +88,7 @@ pub fn render_status_bar(
             "↑↓: change position  Enter: confirm  Esc: cancel"
         }
         EditorMode::SelectBoxColor => "↑↓: change color  Enter: confirm  Esc: cancel",
-        EditorMode::Help => "?: close",
+        EditorMode::Help => "any key: close",
         EditorMode::ConfirmClear | EditorMode::ConfirmQuit => "y/Enter: confirm  n/Esc: cancel",
     };
 
@@ -100,9 +104,21 @@ pub fn render_status_bar(
 
     spans.push(Span::raw("  "));
 
-    if let Some(msg) = status_message {
-        spans.push(Span::styled(msg, theme.success));
+    if let Some(status) = status_message {
+        let style = if status.is_error {
+            theme.error
+        } else {
+            theme.success
+        };
+        spans.push(Span::styled(status.text.as_str(), style));
         spans.push(Span::raw("  "));
+    }
+
+    let used_width: usize = spans.iter().map(Span::width).sum();
+    let fits = used_width + DIRTY_HINTS.len() + hints.chars().count() <= usize::from(area.width);
+
+    if dirty && *mode == EditorMode::Normal && fits {
+        spans.push(Span::styled(DIRTY_HINTS, theme.muted));
     }
 
     spans.push(Span::styled(hints, theme.muted));

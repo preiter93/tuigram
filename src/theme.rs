@@ -16,6 +16,9 @@ pub struct Theme {
     #[style(fg = success, add_modifier = bold)]
     pub success: Style,
 
+    #[style(fg = error, add_modifier = bold)]
+    pub error: Style,
+
     #[style(fg = black, bg = accent, add_modifier = bold)]
     pub status_normal: Style,
 
@@ -50,6 +53,7 @@ pub struct Colors {
     pub accent: Color,
     pub highlight: Color,
     pub success: Color,
+    pub error: Color,
     pub warning: Color,
     pub help: Color,
     pub black: Color,
@@ -63,6 +67,7 @@ impl Default for Colors {
             accent: Color::Rgb(138, 180, 248),
             highlight: Color::Yellow,
             success: Color::Green,
+            error: Color::Red,
             warning: Color::Yellow,
             help: Color::Magenta,
             black: Color::Black,

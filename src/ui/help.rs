@@ -10,7 +10,7 @@ use tui_world::{Keybindings, WidgetId};
 
 use crate::theme::Theme;
 
-const HELP_WIDTH: u16 = 44;
+const COLUMN_GAP: u16 = 2;
 
 struct HelpEntry {
     keys: &'static str,
@@ -45,11 +45,11 @@ const HELP_SECTIONS: &[HelpSection] = &[
             },
             HelpEntry {
                 keys: "m/M",
-                description: "Insert message after/before",
+                description: "Message after/before",
             },
             HelpEntry {
                 keys: "n/N",
-                description: "Insert note after/before",
+                description: "Note after/before",
             },
         ],
     },
@@ -91,7 +91,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         entries: &[
             HelpEntry {
                 keys: "H/L, ⇧←/→",
-                description: "Move participant/Reverse arrow",
+                description: "Move participant/arrow",
             },
             HelpEntry {
                 keys: "J/K, ⇧↓/↑",
@@ -120,8 +120,16 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 description: "Save to file",
             },
             HelpEntry {
+                keys: "S",
+                description: "Save as…",
+            },
+            HelpEntry {
+                keys: "y",
+                description: "Copy Mermaid to clipboard",
+            },
+            HelpEntry {
                 keys: "?",
-                description: "Toggle help",
+                description: "Show help (any key closes)",
             },
             HelpEntry {
                 keys: "Ctrl+c",
@@ -138,30 +146,11 @@ pub fn render_help(
     _keybindings: &Keybindings,
     _active: &[WidgetId],
 ) {
-    let mut lines: Vec<Line> = Vec::new();
-
-    for (i, section) in HELP_SECTIONS.iter().enumerate() {
-        if i > 0 {
-            lines.push(Line::raw(""));
-        }
-
-        lines.push(Line::from(Span::styled(section.title, theme.muted)));
-
-        for entry in section.entries {
-            let spans = vec![
-                Span::styled(format!(" {:>10}", entry.keys), theme.key),
-                Span::raw("  "),
-                Span::styled(entry.description, theme.text),
-            ];
-            lines.push(Line::from(spans));
-        }
-    }
-
-    let popup_height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
-
-    let popup_area = centered_rect(HELP_WIDTH, popup_height, area);
-
-    frame.render_widget(Clear, popup_area);
+    let split = split_index();
+    let (left, right) = HELP_SECTIONS.split_at(split);
+    let left_width = column_width(left);
+    let right_width = column_width(right);
+    let two_columns_width = left_width + COLUMN_GAP + right_width + 2;
 
     let block = Block::default()
         .title(" Help ")
@@ -169,11 +158,97 @@ pub fn render_help(
         .borders(Borders::ALL)
         .border_style(theme.border);
 
+    if area.width >= two_columns_width {
+        let left_lines = section_lines(left, theme);
+        let right_lines = section_lines(right, theme);
+        let height = left_lines.len().max(right_lines.len()) as u16 + 2;
+        let popup_area = centered_rect(two_columns_width, height.min(area.height), area);
+
+        frame.render_widget(Clear, popup_area);
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let [left_area, _, right_area] = Layout::horizontal([
+            Constraint::Length(left_width),
+            Constraint::Length(COLUMN_GAP),
+            Constraint::Length(right_width),
+        ])
+        .areas(inner);
+        frame.render_widget(Paragraph::new(left_lines), left_area);
+        frame.render_widget(Paragraph::new(right_lines), right_area);
+        return;
+    }
+
+    let lines = section_lines(HELP_SECTIONS, theme);
+    let width = column_width(HELP_SECTIONS).max(left_width) + 2;
+    let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let popup_area = centered_rect(width.min(area.width), height, area);
+
+    frame.render_widget(Clear, popup_area);
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
 
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, inner);
+fn section_height(section: &HelpSection) -> usize {
+    section.entries.len() + 2
+}
+
+fn split_index() -> usize {
+    let total: usize = HELP_SECTIONS.iter().map(section_height).sum();
+    let mut height = 0;
+
+    for (i, section) in HELP_SECTIONS.iter().enumerate() {
+        if height * 2 >= total {
+            return i;
+        }
+        height += section_height(section);
+    }
+
+    HELP_SECTIONS.len()
+}
+
+fn key_width(sections: &[HelpSection]) -> usize {
+    sections
+        .iter()
+        .flat_map(|section| section.entries)
+        .map(|entry| entry.keys.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+fn column_width(sections: &[HelpSection]) -> u16 {
+    let description_width = sections
+        .iter()
+        .flat_map(|section| section.entries)
+        .map(|entry| entry.description.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    (1 + key_width(sections) + 2 + description_width) as u16
+}
+
+fn section_lines<'a>(sections: &'a [HelpSection], theme: &Theme) -> Vec<Line<'a>> {
+    let key_width = key_width(sections);
+    let mut lines = Vec::new();
+
+    for (i, section) in sections.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::raw(""));
+        }
+
+        lines.push(Line::from(Span::styled(section.title, theme.muted)));
+
+        for entry in section.entries {
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {:>key_width$}", entry.keys), theme.key),
+                Span::raw("  "),
+                Span::styled(entry.description, theme.text),
+            ]));
+        }
+    }
+
+    lines
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -184,4 +259,32 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
         .flex(Flex::Center)
         .areas(area);
     area
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn help_fits_80x24_with_all_sections() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let theme = Theme::default();
+        let keybindings = Keybindings::default();
+
+        terminal
+            .draw(|frame| render_help(frame, frame.area(), &theme, &keybindings, &[]))
+            .unwrap();
+
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(screen.contains("[Other]"));
+        assert!(screen.contains("Copy Mermaid to clipboard"));
+        assert!(screen.contains("Quit"));
+    }
 }

@@ -14,6 +14,7 @@ use crate::{
 };
 
 const ACTOR_GLYPH: &str = "☺ ";
+const DEFAULT_BOX_COLOR: BoxColor = BoxColor::Gray;
 
 pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
     let selection = world.get::<EditorState>().selection;
@@ -151,7 +152,7 @@ fn render_participant_box_backgrounds(f: &mut Frame, area: Rect, world: &World, 
             height: area.height,
         };
 
-        let (bg_color, _label_color) = box_display_colors(b.color);
+        let (bg_color, _label_color) = box_display_colors(b.color.unwrap_or(DEFAULT_BOX_COLOR));
 
         // Borderless full-height background fill
         f.render_widget(
@@ -190,7 +191,7 @@ fn render_box_labels(f: &mut Frame, area: Rect, world: &World, positions: &[u16]
             continue;
         }
 
-        let (bg_color, label_color) = box_display_colors(b.color);
+        let (bg_color, label_color) = box_display_colors(b.color.unwrap_or(DEFAULT_BOX_COLOR));
 
         f.render_widget(
             Paragraph::new(b.label.as_str())

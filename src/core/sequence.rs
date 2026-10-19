@@ -38,7 +38,7 @@ impl SequenceDiagram {
         }
         self.boxes.push(ParticipantBox {
             label,
-            color,
+            color: Some(color),
             start,
             end,
         });
@@ -333,12 +333,16 @@ impl SequenceDiagram {
         let mut i = 0;
         while i < self.participants.len() {
             if let Some(b) = self.boxes.iter().find(|b| b.start == i) {
-                let color = b.color.as_mermaid_str();
-                if b.label.is_empty() {
-                    lines.push(format!("    box {color}"));
-                } else {
-                    lines.push(format!("    box {color} {}", b.label));
+                let mut header = String::from("    box");
+                if let Some(color) = b.color {
+                    header.push(' ');
+                    header.push_str(color.as_mermaid_str());
                 }
+                if !b.label.is_empty() {
+                    header.push(' ');
+                    header.push_str(&b.label);
+                }
+                lines.push(header);
                 let box_end = b.end;
                 for j in i..=box_end {
                     if let Some(p) = self.participants.get(j) {
@@ -401,7 +405,7 @@ impl SequenceDiagram {
 
     pub fn from_mermaid(input: &str) -> Result<Self> {
         let mut diagram = SequenceDiagram::new();
-        let mut current_box: Option<(BoxColor, String, usize)> = None;
+        let mut current_box: Option<(Option<BoxColor>, String, usize)> = None;
         let mut seen_header = false;
 
         for (idx, line) in input.lines().enumerate() {
@@ -437,7 +441,7 @@ impl SequenceDiagram {
 
     fn parse_line(
         &mut self,
-        current_box: &mut Option<(BoxColor, String, usize)>,
+        current_box: &mut Option<(Option<BoxColor>, String, usize)>,
         trimmed: &str,
     ) -> Result<()> {
         if let Some(first_word) = trimmed.split_whitespace().next() {
@@ -552,15 +556,15 @@ impl SequenceDiagram {
             }
             let rest = trimmed.strip_prefix("box").unwrap().trim();
             let (color, label) = if rest.is_empty() {
-                (BoxColor::default(), String::new())
+                (None, String::new())
             } else {
                 let (first_word, remainder) = rest
                     .split_once(|c: char| c.is_whitespace())
                     .map_or((rest, ""), |(f, r)| (f, r.trim()));
                 if let Some(c) = BoxColor::from_mermaid_str(first_word) {
-                    (c, remainder.to_string())
+                    (Some(c), remainder.to_string())
                 } else {
-                    (BoxColor::default(), rest.to_string())
+                    (None, rest.to_string())
                 }
             };
             *current_box = Some((color, label, self.participants.len()));
@@ -709,7 +713,7 @@ mod tests {
         assert_eq!(parsed.participants, diagram.participants);
         assert_eq!(parsed.boxes.len(), 1);
         assert_eq!(parsed.boxes[0].label, "Frontend");
-        assert_eq!(parsed.boxes[0].color, BoxColor::Blue);
+        assert_eq!(parsed.boxes[0].color, Some(BoxColor::Blue));
         assert_eq!(parsed.boxes[0].start, 0);
         assert_eq!(parsed.boxes[0].end, 1);
     }
@@ -744,8 +748,55 @@ mod tests {
         let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
 
         assert_eq!(parsed.boxes.len(), 1);
-        assert_eq!(parsed.boxes[0].color, BoxColor::Red);
+        assert_eq!(parsed.boxes[0].color, Some(BoxColor::Red));
         assert_eq!(parsed.boxes[0].label, "");
+    }
+
+    fn box_source(header: &str) -> String {
+        format!("sequenceDiagram\n    box {header}\n        participant A\n    end\n")
+    }
+
+    #[test]
+    fn test_box_without_color_keeps_label_and_exports_it() {
+        let diagram = SequenceDiagram::from_mermaid(&box_source("Foo")).unwrap();
+
+        assert_eq!(diagram.boxes[0].color, None);
+        assert_eq!(diagram.boxes[0].label, "Foo");
+        assert!(diagram.to_mermaid().contains("    box Foo\n"));
+    }
+
+    #[test]
+    fn test_bare_box_roundtrips() {
+        let diagram = SequenceDiagram::from_mermaid(&box_source("")).unwrap();
+
+        assert_eq!(diagram.boxes[0].color, None);
+        assert_eq!(diagram.boxes[0].label, "");
+
+        let mermaid = diagram.to_mermaid();
+        assert!(mermaid.contains("    box\n"));
+        let reparsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
+        assert_eq!(reparsed.to_mermaid(), mermaid);
+    }
+
+    #[test]
+    fn test_box_rgb_color_is_kept_in_label() {
+        let diagram = SequenceDiagram::from_mermaid(&box_source("rgb(10, 20, 30) Foo")).unwrap();
+
+        assert_eq!(diagram.boxes[0].color, None);
+        assert_eq!(diagram.boxes[0].label, "rgb(10, 20, 30) Foo");
+        assert!(
+            diagram
+                .to_mermaid()
+                .contains("    box rgb(10, 20, 30) Foo\n")
+        );
+    }
+
+    #[test]
+    fn test_box_color_only_has_empty_label() {
+        let diagram = SequenceDiagram::from_mermaid(&box_source("Red")).unwrap();
+
+        assert_eq!(diagram.boxes[0].color, Some(BoxColor::Red));
+        assert_eq!(diagram.boxes[0].label, "");
     }
 
     #[test]

@@ -12,6 +12,7 @@ mod theme;
 mod ui;
 
 use clap::Parser;
+use crossterm::clipboard::CopyToClipboard;
 use ratatui::crossterm::{
     event::{self, Event as CEvent, KeyEventKind},
     execute,
@@ -22,7 +23,7 @@ use std::{
 };
 use tui_world::prelude::*;
 
-use crate::core::SequenceDiagram;
+use crate::{core::SequenceDiagram, ui::EditorState};
 
 /// A TUI sequence diagram editor
 #[derive(Parser, Debug)]
@@ -68,6 +69,18 @@ fn load_diagram(path: &Path) -> anyhow::Result<SequenceDiagram> {
         .map_err(|e| anyhow::anyhow!("Failed to parse mermaid file '{}': {}", path.display(), e))
 }
 
+fn copy_pending_clipboard(world: &mut World) {
+    let Some(text) = world.get_mut::<app::AppState>().pending_clipboard.take() else {
+        return;
+    };
+
+    if let Err(e) = execute!(std::io::stdout(), CopyToClipboard::to_clipboard_from(text)) {
+        world
+            .get_mut::<EditorState>()
+            .set_error(format!("Copy failed: {e}"));
+    }
+}
+
 fn run(diagram: SequenceDiagram, path: Option<PathBuf>) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     execute!(std::io::stdout())?;
@@ -84,6 +97,8 @@ fn run(diagram: SequenceDiagram, path: Option<PathBuf>) -> anyhow::Result<()> {
         {
             app::handle_key(&mut world, key);
         }
+
+        copy_pending_clipboard(&mut world);
 
         if world.get::<app::AppState>().should_quit {
             break;

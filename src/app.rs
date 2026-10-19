@@ -22,6 +22,7 @@ const DEFAULT_FILE: &str = "diagram.mmd";
 const MAX_UNDO_HISTORY: usize = 100;
 
 pub const NORMAL: WidgetId = WidgetId("Normal");
+pub const HELP: WidgetId = WidgetId("Help");
 pub const CONFIRM: WidgetId = WidgetId("Confirm");
 pub const TEXT_INPUT: WidgetId = WidgetId("TextInput");
 pub const SELECT_PARTICIPANT: WidgetId = WidgetId("SelectParticipant");
@@ -33,6 +34,7 @@ pub struct AppState {
     pub area: Rect,
     pub file_path: PathBuf,
     pub saved_mermaid: String,
+    pub pending_clipboard: Option<String>,
     undo_stack: Vec<SequenceDiagram>,
     redo_stack: Vec<SequenceDiagram>,
     committed: SequenceDiagram,
@@ -57,6 +59,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram, path: Option<Pat
         area: Rect::default(),
         file_path: path.unwrap_or_else(|| PathBuf::from(DEFAULT_FILE)),
         saved_mermaid: diagram.to_mermaid(),
+        pending_clipboard: None,
         undo_stack: Vec::new(),
         redo_stack: Vec::new(),
         committed: diagram.clone(),
@@ -66,6 +69,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram, path: Option<Pat
     world.insert(ScrollState::new());
 
     normal_keybindings(world);
+    help_keybindings(world);
     select_participant_keybindings(world);
     select_position_keybindings(world);
     text_input_keybindings(world);
@@ -175,19 +179,51 @@ fn restore_diagram(world: &mut World, diagram: SequenceDiagram, status: &str) {
 }
 
 fn save_diagram(world: &mut World) {
-    let mermaid = world.get::<SequenceDiagram>().to_mermaid();
-    let app = world.get::<AppState>();
+    let path = world.get::<AppState>().file_path.clone();
+    save_to(world, path);
+}
 
-    match fs::write(&app.file_path, &mermaid) {
-        Ok(()) => {
-            let message = format!("Saved to {}", app.file_name());
-            world.get_mut::<AppState>().saved_mermaid = mermaid;
-            world.get_mut::<EditorState>().set_status(message);
-        }
-        Err(e) => world
+fn save_to(world: &mut World, path: PathBuf) {
+    let mermaid = world.get::<SequenceDiagram>().to_mermaid();
+
+    if let Err(e) = fs::write(&path, &mermaid) {
+        world
             .get_mut::<EditorState>()
-            .set_status(format!("Save failed: {e}")),
+            .set_error(format!("Save failed: {e}"));
+        return;
     }
+
+    let app = world.get_mut::<AppState>();
+    app.file_path = path;
+    app.saved_mermaid = mermaid;
+    let message = format!("Saved to {}", app.file_name());
+    world.get_mut::<EditorState>().set_status(message);
+}
+
+fn expand_tilde(input: &str) -> PathBuf {
+    let Some(home) = std::env::var_os("HOME") else {
+        return PathBuf::from(input);
+    };
+
+    if input == "~" {
+        return PathBuf::from(home);
+    }
+
+    if let Some(rest) = input.strip_prefix("~/") {
+        return PathBuf::from(home).join(rest);
+    }
+
+    PathBuf::from(input)
+}
+
+fn copy_diagram(world: &mut World) {
+    let mermaid = world.get::<SequenceDiagram>().to_mermaid();
+    let lines = mermaid.lines().count();
+
+    world.get_mut::<AppState>().pending_clipboard = Some(mermaid);
+    world
+        .get_mut::<EditorState>()
+        .set_status(format!("Copied {lines} lines"));
 }
 
 fn normal_keybindings(world: &mut World) {
@@ -564,16 +600,20 @@ fn normal_keybindings(world: &mut World) {
 
     kb.bind(NORMAL, 'E', "Save to file", save_diagram);
 
+    kb.bind(NORMAL, 'S', "Save as", |world| {
+        let path = world.get::<AppState>().file_path.display().to_string();
+        let editor = world.get_mut::<EditorState>();
+        editor.mode = EditorMode::InputSavePath;
+        editor.input_buffer = path;
+    });
+
+    kb.bind(NORMAL, 'y', "Copy to clipboard", copy_diagram);
+
     kb.bind(NORMAL, 'u', "Undo", undo);
     kb.bind_many(NORMAL, keys!['U', KeyBinding::ctrl('r')], "Redo", redo);
 
     kb.bind(NORMAL, '?', "Help", |world| {
-        let editor = world.get_mut::<EditorState>();
-        editor.mode = if editor.mode == EditorMode::Help {
-            EditorMode::Normal
-        } else {
-            EditorMode::Help
-        };
+        world.get_mut::<EditorState>().mode = EditorMode::Help;
     });
 
     kb.bind(
@@ -584,6 +624,14 @@ fn normal_keybindings(world: &mut World) {
             world.get_mut::<EditorState>().clear_selection();
         },
     );
+}
+
+fn help_keybindings(world: &mut World) {
+    let kb = world.get_mut::<Keybindings>();
+
+    kb.bind_any(HELP, |world, _key| {
+        world.get_mut::<EditorState>().mode = EditorMode::Normal;
+    });
 }
 
 fn select_participant_keybindings(world: &mut World) {
@@ -977,6 +1025,8 @@ fn handle_input_confirm(world: &mut World) {
         EditorMode::InputBoxLabel => {
             let editor_state = world.get::<EditorState>().clone();
             let label = editor_state.input_buffer.trim().to_string();
+            world.get_mut::<EditorState>().reset();
+
             if let (Some(mut start), Some(mut end)) = (editor_state.box_start, editor_state.box_end)
             {
                 if start > end {
@@ -991,10 +1041,16 @@ fn handle_input_confirm(world: &mut World) {
                 if !ok {
                     world
                         .get_mut::<EditorState>()
-                        .set_status("Boxes cannot overlap");
+                        .set_error("Boxes cannot overlap");
                 }
             }
+        }
+        EditorMode::InputSavePath => {
+            let input = world.get::<EditorState>().input_buffer.trim().to_string();
             world.get_mut::<EditorState>().reset();
+            if !input.is_empty() {
+                save_to(world, expand_tilde(&input));
+            }
         }
         _ => {}
     }
@@ -1089,7 +1145,8 @@ fn record_history(world: &mut World) {
 pub fn active_widgets(world: &World) -> Vec<WidgetId> {
     let mode = &world.get::<EditorState>().mode;
     match mode {
-        EditorMode::Normal | EditorMode::Help => vec![NORMAL],
+        EditorMode::Normal => vec![NORMAL],
+        EditorMode::Help => vec![HELP],
         EditorMode::ConfirmClear | EditorMode::ConfirmQuit => vec![CONFIRM],
         EditorMode::SelectNotePosition | EditorMode::EditNotePosition => vec![SELECT_POSITION],
         EditorMode::SelectBoxColor => vec![SELECT_BOX_COLOR],
@@ -1129,7 +1186,8 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         | EditorMode::RenameParticipant
         | EditorMode::InputNoteText
         | EditorMode::EditNoteText
-        | EditorMode::InputBoxLabel => {
+        | EditorMode::InputBoxLabel
+        | EditorMode::InputSavePath => {
             render_input_popup(frame, world);
         }
         EditorMode::SelectFrom
@@ -1148,8 +1206,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
             render_note_position_selector(frame, area, world);
         }
         EditorMode::Help => {
-            let active = vec![NORMAL];
-            render_help(frame, area, theme, keybindings, &active);
+            render_help(frame, area, theme, keybindings, &[HELP]);
         }
         EditorMode::ConfirmClear | EditorMode::ConfirmQuit => {
             render_confirm_dialog(frame, world);
@@ -1712,8 +1769,7 @@ mod tests {
         world
             .get::<EditorState>()
             .get_status()
-            .unwrap_or_default()
-            .to_string()
+            .map_or_else(String::new, |s| s.text.clone())
     }
 
     #[test]
@@ -1868,5 +1924,156 @@ mod tests {
         press_char(&mut world, 'u');
         assert_eq!(world.get::<SequenceDiagram>().participant_count(), 2);
         assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("tuigram-test-{}-{name}", std::process::id()))
+    }
+
+    fn type_text(world: &mut World, text: &str) {
+        for c in text.chars() {
+            press_char(world, c);
+        }
+    }
+
+    #[test]
+    fn y_sets_pending_clipboard_and_status() {
+        let mut world = sample_world();
+
+        press_char(&mut world, 'y');
+
+        let expected = world.get::<SequenceDiagram>().to_mermaid();
+        let lines = expected.lines().count();
+        assert_eq!(
+            world.get::<AppState>().pending_clipboard.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(status(&world), format!("Copied {lines} lines"));
+    }
+
+    #[test]
+    fn capital_s_opens_prompt_prefilled_with_path() {
+        let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("a/b.mmd")));
+
+        press_char(&mut world, 'S');
+
+        let editor = world.get::<EditorState>();
+        assert_eq!(editor.mode, EditorMode::InputSavePath);
+        assert_eq!(editor.input_buffer, "a/b.mmd");
+    }
+
+    #[test]
+    fn save_as_writes_updates_path_and_later_save_uses_it() {
+        let path = temp_path("save-as.mmd");
+        let mut world = sample_world();
+
+        press_char(&mut world, 'S');
+        for _ in 0..world.get::<EditorState>().input_buffer.len() {
+            press(&mut world, KeyCode::Backspace);
+        }
+        type_text(&mut world, path.to_str().unwrap());
+        press(&mut world, KeyCode::Enter);
+
+        let written = fs::read_to_string(&path);
+        let mermaid = world.get::<SequenceDiagram>().to_mermaid();
+        assert_eq!(world.get::<AppState>().file_path, path);
+        assert!(!is_dirty(&world));
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+
+        world.get_mut::<SequenceDiagram>().add_participant("C");
+        press_char(&mut world, 'E');
+        let saved = fs::read_to_string(&path);
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(written.unwrap(), mermaid);
+        assert!(saved.unwrap().contains("participant C"));
+    }
+
+    #[test]
+    fn save_as_to_missing_dir_is_error_and_keeps_path() {
+        let path = temp_path("missing-dir").join("nested").join("x.mmd");
+        let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("keep.mmd")));
+        world.get_mut::<EditorState>().mode = EditorMode::InputSavePath;
+        world.get_mut::<EditorState>().input_buffer = path.display().to_string();
+
+        press(&mut world, KeyCode::Enter);
+
+        let status = world.get::<EditorState>().get_status().unwrap();
+        assert!(status.is_error);
+        assert!(status.text.starts_with("Save failed"));
+        assert_eq!(world.get::<AppState>().file_path, Path::new("keep.mmd"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn save_as_escape_cancels() {
+        let mut world = sample_world();
+
+        press_char(&mut world, 'S');
+        press(&mut world, KeyCode::Esc);
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(world.get::<AppState>().file_path, Path::new("diagram.mmd"));
+    }
+
+    #[test]
+    fn expand_tilde_cases() {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+
+        assert_eq!(expand_tilde("a/b.mmd"), Path::new("a/b.mmd"));
+        assert_eq!(expand_tilde("/abs/b.mmd"), Path::new("/abs/b.mmd"));
+        assert_eq!(expand_tilde("~other/x"), Path::new("~other/x"));
+
+        if let Some(home) = home {
+            assert_eq!(expand_tilde("~"), home);
+            assert_eq!(expand_tilde("~/x.mmd"), home.join("x.mmd"));
+        }
+    }
+
+    #[test]
+    fn help_closes_on_any_key_without_side_effects() {
+        let mut world = sample_world();
+
+        press_char(&mut world, '?');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Help);
+        press_char(&mut world, 'p');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        press_char(&mut world, '?');
+        press_char(&mut world, 'D');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
+
+        press_char(&mut world, '?');
+        press_char(&mut world, '?');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+
+        press_char(&mut world, '?');
+        handle_key(
+            &mut world,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert!(!world.get::<AppState>().should_quit);
+    }
+
+    #[test]
+    fn overlapping_box_reports_error() {
+        let mut world = sample_world();
+        world
+            .get_mut::<SequenceDiagram>()
+            .add_box(String::new(), BoxColor::Red, 0, 1);
+
+        press_char(&mut world, 'b');
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+
+        let status = world.get::<EditorState>().get_status().unwrap();
+        assert!(status.is_error);
+        assert_eq!(status.text, "Boxes cannot overlap");
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
     }
 }

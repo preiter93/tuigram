@@ -66,7 +66,9 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `C` | Clear diagram |
 | `u` / `U` or `Ctrl+r` | Undo / redo (up to 100 steps) |
 | `E` | Save to file (opened file, else `diagram.mmd`) |
-| `?` | Help |
+| `S` | Save as (prompts for a path) |
+| `y` | Copy Mermaid to clipboard |
+| `?` | Help (any key closes it) |
 | `Ctrl+c` | Quit (asks if there are unsaved changes) |
 
 > \* `Shift+↑/↓` may not work in all terminals, some intercept these for scrollback. Use `J`/`K` instead.
@@ -79,8 +81,12 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 tuigram diagram.mmd
 ```
 
-`--import diagram.mmd` still works. A missing file starts an empty diagram and is created on save. Press `E` to save back to the opened file (default `diagram.mmd`); a `[+]` marker in the status bar shows unsaved changes. Saving rewrites the file in canonical format, so `%%` comments, blank lines and custom formatting are dropped.
+`--import diagram.mmd` still works. A missing file starts an empty diagram and is created on save. Press `E` to save back to the opened file (default `diagram.mmd`); a `[+]` marker in the status bar shows unsaved changes. `S` asks for a new path (`~` is expanded, missing directories are not created, an existing file is overwritten without asking) and makes it the save target for later `E` presses. Saving rewrites the file in canonical format, so `%%` comments, blank lines and custom formatting are dropped.
 
 Blank lines and `%%` comments are ignored; unsupported syntax is reported with its line number.
 
 Participant aliases (`participant A as Alice`) and `actor` declarations are supported.
+
+## Clipboard
+
+`y` copies the diagram as Mermaid text using the OSC 52 terminal escape sequence. The terminal gives no confirmation, so "Copied N lines" only means the sequence was sent. Terminal.app ignores OSC 52, tmux needs `set -g set-clipboard on`, and some terminals limit the size or ask before accepting it.

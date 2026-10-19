@@ -216,7 +216,7 @@ impl BoxColor {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParticipantBox {
     pub label: String,
-    pub color: BoxColor,
+    pub color: Option<BoxColor>,
     pub start: usize,
     pub end: usize,
 }

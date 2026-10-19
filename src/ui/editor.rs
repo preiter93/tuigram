@@ -1,7 +1,10 @@
 use super::Selection;
 use crate::core::BoxColor;
 use crate::core::NotePosition;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const STATUS_DURATION: Duration = Duration::from_millis(1000);
+const ERROR_STATUS_DURATION: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum EditorMode {
@@ -30,6 +33,7 @@ pub enum EditorMode {
     SelectBoxEnd,
     SelectBoxColor,
     InputBoxLabel,
+    InputSavePath,
 }
 
 impl EditorMode {
@@ -63,6 +67,7 @@ impl EditorMode {
                 | Self::InputNoteText
                 | Self::EditNoteText
                 | Self::InputBoxLabel
+                | Self::InputSavePath
         )
     }
 }
@@ -70,6 +75,7 @@ impl EditorMode {
 #[derive(Clone)]
 pub struct StatusMessage {
     pub text: String,
+    pub is_error: bool,
     pub created_at: Instant,
 }
 
@@ -118,18 +124,28 @@ impl EditorState {
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = Some(StatusMessage {
             text: msg.into(),
+            is_error: false,
             created_at: Instant::now(),
         });
     }
 
-    pub fn get_status(&self) -> Option<&str> {
-        self.status_message.as_ref().and_then(|s| {
-            if s.created_at.elapsed().as_millis() < 1000 {
-                Some(s.text.as_str())
-            } else {
-                None
-            }
-        })
+    pub fn set_error(&mut self, msg: impl Into<String>) {
+        self.status_message = Some(StatusMessage {
+            text: msg.into(),
+            is_error: true,
+            created_at: Instant::now(),
+        });
+    }
+
+    pub fn get_status(&self) -> Option<&StatusMessage> {
+        let status = self.status_message.as_ref()?;
+        let visible_for = if status.is_error {
+            ERROR_STATUS_DURATION
+        } else {
+            STATUS_DURATION
+        };
+
+        (status.created_at.elapsed() < visible_for).then_some(status)
     }
 
     pub fn clear_selection(&mut self) {
