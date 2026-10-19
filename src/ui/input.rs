@@ -8,7 +8,7 @@ use tui_world::World;
 
 use super::{EditorMode, EditorState};
 use crate::{
-    core::{NotePosition, SequenceDiagram},
+    core::{NotePosition, Participant, SequenceDiagram},
     theme::Theme,
 };
 
@@ -26,11 +26,11 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
             let from_name = editor
                 .message_from
                 .and_then(|i| diagram.participants.get(i))
-                .map_or("?", String::as_str);
+                .map_or("?", Participant::display_name);
             let to_name = editor
                 .message_to
                 .and_then(|i| diagram.participants.get(i))
-                .map_or("?", String::as_str);
+                .map_or("?", Participant::display_name);
             let title = if editor.mode == EditorMode::EditMessage {
                 "Edit Message"
             } else {
@@ -43,11 +43,11 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
             let start_name = editor
                 .note_participant_start
                 .and_then(|i| diagram.participants.get(i))
-                .map_or("?", String::as_str);
+                .map_or("?", Participant::display_name);
             let end_name = editor
                 .note_participant_end
                 .and_then(|i| diagram.participants.get(i))
-                .map_or("?", String::as_str);
+                .map_or("?", Participant::display_name);
 
             let pos_str = match position {
                 NotePosition::Right => format!("Right of {start_name}"),

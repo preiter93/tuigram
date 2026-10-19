@@ -65,12 +65,24 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 description: "Rename selected",
             },
             HelpEntry {
-                keys: "d",
+                keys: "t",
+                description: "Toggle participant/actor",
+            },
+            HelpEntry {
+                keys: "D",
                 description: "Delete selected",
+            },
+            HelpEntry {
+                keys: "a/A",
+                description: "Cycle arrow style",
             },
             HelpEntry {
                 keys: "C",
                 description: "Clear diagram",
+            },
+            HelpEntry {
+                keys: "u/U, Ctrl+r",
+                description: "Undo/redo",
             },
         ],
     },
@@ -105,7 +117,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         entries: &[
             HelpEntry {
                 keys: "E",
-                description: "Export to Mermaid",
+                description: "Save to file",
             },
             HelpEntry {
                 keys: "?",

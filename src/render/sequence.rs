@@ -8,10 +8,12 @@ use ratatui::{
 use tui_world::World;
 
 use crate::{
-    core::{BoxColor, Event, NotePosition, SequenceDiagram},
+    core::{ArrowStyle, BoxColor, Event, NotePosition, Participant, SequenceDiagram},
     theme::Theme,
     ui::{EditorState, FIRST_MESSAGE_OFFSET, HEADER_HEIGHT, Selection, scroll::ScrollState},
 };
+
+const ACTOR_GLYPH: &str = "☺ ";
 
 pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
     let selection = world.get::<EditorState>().selection;
@@ -75,20 +77,21 @@ fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
     render_participant_box_backgrounds(f, area, world, &positions);
 
     // Then render individual participant boxes
-    for (i, name) in diagram.participants.iter().enumerate() {
+    for (i, participant) in diagram.participants.iter().enumerate() {
+        let text = header_text(participant);
         let style = if selection == Selection::Participant(i) {
             theme.selected
         } else {
             theme.text
         };
 
-        let width = name.len() as u16 + 4;
+        let width = text_width(&text) + 4;
         let x = positions[i]
             .saturating_sub(width / 2)
             .min(area.width.saturating_sub(width));
 
         f.render_widget(
-            Paragraph::new(name.as_str())
+            Paragraph::new(text)
                 .alignment(Alignment::Center)
                 .style(style)
                 .block(Block::default().borders(Borders::ALL).border_style(style)),
@@ -104,6 +107,14 @@ fn render_participants(f: &mut Frame, area: Rect, world: &World) -> Vec<u16> {
     positions
 }
 
+fn header_text(p: &Participant) -> String {
+    if p.actor {
+        format!("{ACTOR_GLYPH}{}", p.display_name())
+    } else {
+        p.display_name().to_string()
+    }
+}
+
 fn render_participant_box_backgrounds(f: &mut Frame, area: Rect, world: &World, positions: &[u16]) {
     let diagram = world.get::<SequenceDiagram>();
 
@@ -112,11 +123,11 @@ fn render_participant_box_backgrounds(f: &mut Frame, area: Rect, world: &World, 
             continue;
         }
 
-        let start_name = &diagram.participants[b.start];
-        let end_name = &diagram.participants[b.end];
+        let start_text = header_text(&diagram.participants[b.start]);
+        let end_text = header_text(&diagram.participants[b.end]);
 
-        let start_w = (start_name.len() as u16 + 4).min(area.width);
-        let end_w = (end_name.len() as u16 + 4).min(area.width);
+        let start_w = (text_width(&start_text) + 4).min(area.width);
+        let end_w = (text_width(&end_text) + 4).min(area.width);
 
         let start_x = positions[b.start]
             .saturating_sub(start_w / 2)
@@ -158,11 +169,11 @@ fn render_box_labels(f: &mut Frame, area: Rect, world: &World, positions: &[u16]
             continue;
         }
 
-        let start_name = &diagram.participants[b.start];
-        let end_name = &diagram.participants[b.end];
+        let start_text = header_text(&diagram.participants[b.start]);
+        let end_text = header_text(&diagram.participants[b.end]);
 
-        let start_w = (start_name.len() as u16 + 4).min(area.width);
-        let end_w = (end_name.len() as u16 + 4).min(area.width);
+        let start_w = (text_width(&start_text) + 4).min(area.width);
+        let end_w = (text_width(&end_text) + 4).min(area.width);
 
         let start_x = positions[b.start]
             .saturating_sub(start_w / 2)
@@ -287,8 +298,21 @@ fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_st
         };
 
         match event {
-            Event::Message { from, to, text } => {
-                render_message(f, participants, *from, *to, text, y, style);
+            Event::Message {
+                from,
+                to,
+                text,
+                style: arrow_style,
+            } => {
+                render_message(
+                    f,
+                    participants[*from],
+                    participants[*to],
+                    text,
+                    *arrow_style,
+                    y,
+                    style,
+                );
             }
             Event::Note {
                 position,
@@ -313,19 +337,37 @@ fn render_events(f: &mut Frame, world: &World, participants: &[u16], lifeline_st
     }
 }
 
+fn line_glyph(arrow_style: ArrowStyle) -> char {
+    if arrow_style.is_dashed() {
+        '┄'
+    } else {
+        '─'
+    }
+}
+
+fn head_glyph(arrow_style: ArrowStyle, pointing_right: bool) -> Option<char> {
+    match arrow_style {
+        ArrowStyle::SolidArrow | ArrowStyle::DashedArrow => {
+            Some(if pointing_right { '▶' } else { '◀' })
+        }
+        ArrowStyle::Solid | ArrowStyle::Dashed => None,
+        ArrowStyle::SolidCross | ArrowStyle::DashedCross => Some('×'),
+        ArrowStyle::SolidAsync | ArrowStyle::DashedAsync => {
+            Some(if pointing_right { '▷' } else { '◁' })
+        }
+    }
+}
+
 fn render_message(
     f: &mut Frame,
-    participants: &[u16],
-    from: usize,
-    to: usize,
+    from_x: u16,
+    to_x: u16,
     text: &str,
+    arrow_style: ArrowStyle,
     y: u16,
     style: ratatui::style::Style,
 ) {
-    let from_x = participants[from];
-    let to_x = participants[to];
-
-    if from == to {
+    if from_x == to_x {
         let loop_width: u16 = 4;
 
         let mut area = Rect {
@@ -335,28 +377,40 @@ fn render_message(
             height: 1,
         };
 
-        f.render_widget(Paragraph::new("───┐").style(style), area);
+        let line = line_glyph(arrow_style);
+        let head = head_glyph(arrow_style, false).unwrap_or(line);
+
+        f.render_widget(
+            Paragraph::new(format!("{line}{line}{line}┐")).style(style),
+            area,
+        );
 
         area.y = y;
         f.render_widget(Paragraph::new("   │").style(style), area);
 
         area.y = y + 1;
-        f.render_widget(Paragraph::new("◀──┘").style(style), area);
+        f.render_widget(
+            Paragraph::new(format!("{head}{line}{line}┘")).style(style),
+            area,
+        );
 
         area.x = from_x + loop_width;
         area.y = y;
-        area.width = text.len() as u16;
+        area.width = text_width(text);
         f.render_widget(Paragraph::new(text).style(style), area);
     } else {
         let start = from_x.min(to_x);
         let end = from_x.max(to_x);
         let len = end - start;
 
-        let mut arrow = "─".repeat(len as usize);
-        if from_x < to_x {
-            arrow.push('▶');
+        let line = line_glyph(arrow_style);
+        let pointing_right = from_x < to_x;
+        let mut arrow = line.to_string().repeat(len as usize);
+        let head = head_glyph(arrow_style, pointing_right).unwrap_or(line);
+        if pointing_right {
+            arrow.push(head);
         } else {
-            arrow.insert(0, '◀');
+            arrow.insert(0, head);
         }
 
         f.render_widget(
@@ -369,9 +423,9 @@ fn render_message(
             },
         );
 
-        let text_width = text.len() as u16;
+        let width = text_width(text);
         let text_x = start + len.div_ceil(2);
-        let text_start = text_x.saturating_sub(text_width / 2);
+        let text_start = text_x.saturating_sub(width / 2);
 
         f.render_widget(
             Paragraph::new(text)
@@ -380,7 +434,7 @@ fn render_message(
             Rect {
                 x: text_start,
                 y: y.saturating_sub(1),
-                width: text_width,
+                width,
                 height: 1,
             },
         );
@@ -400,19 +454,19 @@ fn render_note(
 ) {
     let start_x = participants[participant_start];
     let end_x = participants[participant_end];
-    let text_width = text.len() as u16;
+    let width = text_width(text);
 
     let (x, width) = match position {
-        NotePosition::Right => (start_x.saturating_add(2), text_width + 4),
+        NotePosition::Right => (start_x.saturating_add(2), width + 4),
         NotePosition::Left => {
-            let w = text_width + 4;
+            let w = width + 4;
             (start_x.saturating_sub(w + 1), w)
         }
         NotePosition::Over => {
             let min_x = start_x.min(end_x);
             let max_x = start_x.max(end_x);
             let span = max_x.saturating_sub(min_x);
-            let w = span.max(text_width + 2) + 2;
+            let w = span.max(width + 2) + 2;
             let x = if span > 0 {
                 min_x.saturating_sub(1)
             } else {
@@ -436,4 +490,8 @@ fn render_note(
             .style(style.reversed()),
         area,
     );
+}
+
+fn text_width(text: &str) -> u16 {
+    Line::from(text).width() as u16
 }

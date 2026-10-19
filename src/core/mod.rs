@@ -1,5 +1,5 @@
 mod models;
 mod sequence;
 
-pub use models::{BoxColor, Event, NotePosition};
+pub use models::{ArrowStyle, BoxColor, Event, NotePosition, Participant};
 pub use sequence::SequenceDiagram;

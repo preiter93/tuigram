@@ -13,10 +13,13 @@ mod ui;
 
 use clap::Parser;
 use ratatui::crossterm::{
-    event::{self, Event as CEvent},
+    event::{self, Event as CEvent, KeyEventKind},
     execute,
 };
-use std::path::PathBuf;
+use std::{
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 use tui_world::prelude::*;
 
 use crate::core::SequenceDiagram;
@@ -26,44 +29,60 @@ use crate::core::SequenceDiagram;
 #[command(name = "tuigram")]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Import a Mermaid (.mmd) sequence diagram file
-    #[arg(short, long, value_name = "FILE")]
+    /// Mermaid (.mmd) file to open; created on save if missing
+    #[arg(value_name = "FILE")]
+    file: Option<PathBuf>,
+
+    /// Same as the positional FILE argument
+    #[arg(short, long, value_name = "FILE", conflicts_with = "file")]
     import: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let diagram = if let Some(path) = args.import {
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", path.display(), e))?;
+    let path = args.file.or(args.import);
 
-        SequenceDiagram::from_mermaid(&content).map_err(|e| {
-            anyhow::anyhow!("Failed to parse mermaid file '{}': {}", path.display(), e)
-        })?
-    } else {
-        SequenceDiagram::new()
+    let diagram = match &path {
+        Some(path) => load_diagram(path)?,
+        None => SequenceDiagram::new(),
     };
 
-    run(diagram)
+    run(diagram, path)
 }
 
-fn run(diagram: SequenceDiagram) -> anyhow::Result<()> {
+fn load_diagram(path: &Path) -> anyhow::Result<SequenceDiagram> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(SequenceDiagram::new()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to read file '{}': {}",
+                path.display(),
+                e
+            ));
+        }
+    };
+
+    SequenceDiagram::from_mermaid(&content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse mermaid file '{}': {}", path.display(), e))
+}
+
+fn run(diagram: SequenceDiagram, path: Option<PathBuf>) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     execute!(std::io::stdout())?;
 
     let mut world = World::default();
-    app::setup_world(&mut world, diagram);
+    app::setup_world(&mut world, diagram, path);
 
     loop {
         terminal.draw(|frame| app::render(frame, &mut world))?;
 
-        if event::poll(std::time::Duration::from_millis(16))? {
-            let active = app::active_widgets(&world);
-
-            if let CEvent::Key(key) = event::read()? {
-                InputEvent::Key(key).handle(&mut world, &active);
-            }
+        if event::poll(std::time::Duration::from_millis(16))?
+            && let CEvent::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            app::handle_key(&mut world, key);
         }
 
         if world.get::<app::AppState>().should_quit {

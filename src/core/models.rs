@@ -32,12 +32,88 @@ impl NotePosition {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ArrowStyle {
+    #[default]
+    SolidArrow,
+    DashedArrow,
+    Solid,
+    Dashed,
+    SolidCross,
+    DashedCross,
+    SolidAsync,
+    DashedAsync,
+}
+
+impl ArrowStyle {
+    pub fn as_mermaid_str(self) -> &'static str {
+        match self {
+            Self::SolidArrow => "->>",
+            Self::DashedArrow => "-->>",
+            Self::Solid => "->",
+            Self::Dashed => "-->",
+            Self::SolidCross => "-x",
+            Self::DashedCross => "--x",
+            Self::SolidAsync => "-)",
+            Self::DashedAsync => "--)",
+        }
+    }
+
+    pub fn from_mermaid_str(s: &str) -> Option<Self> {
+        match s {
+            "->>" => Some(Self::SolidArrow),
+            "-->>" => Some(Self::DashedArrow),
+            "->" => Some(Self::Solid),
+            "-->" => Some(Self::Dashed),
+            "-x" => Some(Self::SolidCross),
+            "--x" => Some(Self::DashedCross),
+            "-)" => Some(Self::SolidAsync),
+            "--)" => Some(Self::DashedAsync),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::SolidArrow => Self::DashedArrow,
+            Self::DashedArrow => Self::Solid,
+            Self::Solid => Self::Dashed,
+            Self::Dashed => Self::SolidCross,
+            Self::SolidCross => Self::DashedCross,
+            Self::DashedCross => Self::SolidAsync,
+            Self::SolidAsync => Self::DashedAsync,
+            Self::DashedAsync => Self::SolidArrow,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::SolidArrow => Self::DashedAsync,
+            Self::DashedArrow => Self::SolidArrow,
+            Self::Solid => Self::DashedArrow,
+            Self::Dashed => Self::Solid,
+            Self::SolidCross => Self::Dashed,
+            Self::DashedCross => Self::SolidCross,
+            Self::SolidAsync => Self::DashedCross,
+            Self::DashedAsync => Self::SolidAsync,
+        }
+    }
+
+    pub fn is_dashed(self) -> bool {
+        matches!(
+            self,
+            Self::DashedArrow | Self::Dashed | Self::DashedCross | Self::DashedAsync
+        )
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub enum Event {
     Message {
         from: usize,
         to: usize,
         text: String,
+        style: ArrowStyle,
     },
     Note {
         position: NotePosition,
@@ -137,10 +213,31 @@ impl BoxColor {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ParticipantBox {
     pub label: String,
     pub color: BoxColor,
     pub start: usize,
     pub end: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Participant {
+    pub id: String,
+    pub label: Option<String>,
+    pub actor: bool,
+}
+
+impl Participant {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: None,
+            actor: false,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.id)
+    }
 }

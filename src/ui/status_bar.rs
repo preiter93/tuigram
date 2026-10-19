@@ -9,7 +9,13 @@ use tui_world::World;
 use super::{EditorMode, EditorState, Selection};
 use crate::{core::SequenceDiagram, theme::Theme};
 
-pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
+pub fn render_status_bar(
+    frame: &mut Frame,
+    area: Rect,
+    world: &World,
+    file_name: &str,
+    dirty: bool,
+) {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
@@ -26,7 +32,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         EditorMode::SelectTo | EditorMode::EditSelectTo => ("SELECT TO", theme.status_select),
         EditorMode::EditMessage | EditorMode::RenameParticipant => ("EDIT", theme.status_input),
         EditorMode::Help => ("HELP", theme.status_help),
-        EditorMode::ConfirmClear => ("CONFIRM", theme.status_select),
+        EditorMode::ConfirmClear | EditorMode::ConfirmQuit => ("CONFIRM", theme.status_select),
         EditorMode::SelectNoteParticipant | EditorMode::EditNoteParticipant => {
             ("SELECT PARTICIPANT", theme.status_select)
         }
@@ -47,12 +53,12 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         EditorMode::Normal => {
             if participant_count < 2 {
                 if has_selection {
-                    "p: participant  d: delete  ?: help  Ctrl+c: quit"
+                    "p: participant  D: delete  ?: help  Ctrl+c: quit"
                 } else {
                     "p: participant  ?: help  Ctrl+c: quit"
                 }
             } else if has_selection {
-                "p: participant  m: message  n: note  b: box  d: delete  ?: help  Ctrl+c: quit"
+                "p: participant  m: message  n: note  b: box  D: delete  ?: help  Ctrl+c: quit"
             } else {
                 "p: participant  m: message  n: note  b: box  ?: help  Ctrl+c: quit"
             }
@@ -79,13 +85,20 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, world: &World) {
         }
         EditorMode::SelectBoxColor => "↑↓: change color  Enter: confirm  Esc: cancel",
         EditorMode::Help => "?: close",
-        EditorMode::ConfirmClear => "y/Enter: confirm  n/Esc: cancel",
+        EditorMode::ConfirmClear | EditorMode::ConfirmQuit => "y/Enter: confirm  n/Esc: cancel",
     };
 
     let mut spans = vec![
         Span::styled(format!(" {mode_text} "), mode_style),
         Span::raw(" "),
+        Span::styled(file_name.to_string(), theme.text),
     ];
+
+    if dirty {
+        spans.push(Span::styled(" [+]", theme.accent));
+    }
+
+    spans.push(Span::raw("  "));
 
     if let Some(msg) = status_message {
         spans.push(Span::styled(msg, theme.success));

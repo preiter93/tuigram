@@ -3,7 +3,7 @@ use crate::core::BoxColor;
 use crate::core::NotePosition;
 use std::time::Instant;
 
-#[derive(Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum EditorMode {
     #[default]
     Normal,
@@ -17,6 +17,7 @@ pub enum EditorMode {
     RenameParticipant,
     Help,
     ConfirmClear,
+    ConfirmQuit,
     SelectNoteParticipant,
     SelectNotePosition,
     SelectNoteEndParticipant,

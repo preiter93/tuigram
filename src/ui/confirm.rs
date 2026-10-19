@@ -6,10 +6,17 @@ use ratatui::{
 };
 use tui_world::World;
 
+use super::{EditorMode, EditorState};
 use crate::theme::Theme;
 
 pub fn render_confirm_dialog(frame: &mut Frame, world: &World) {
     let theme = world.get::<Theme>();
+
+    let (title, message) = match world.get::<EditorState>().mode {
+        EditorMode::ConfirmQuit => (" Quit ", "Quit without saving?"),
+        EditorMode::ConfirmClear => (" Clear Diagram ", "Clear the entire diagram?"),
+        _ => return,
+    };
 
     let area = frame.area();
 
@@ -21,7 +28,7 @@ pub fn render_confirm_dialog(frame: &mut Frame, world: &World) {
     frame.render_widget(Clear, popup_area);
 
     let block = Block::default()
-        .title(" Clear Diagram ")
+        .title(title)
         .title_alignment(Alignment::Center)
         .title_style(theme.accent)
         .borders(Borders::ALL)
@@ -31,7 +38,7 @@ pub fn render_confirm_dialog(frame: &mut Frame, world: &World) {
     frame.render_widget(block, popup_area);
 
     frame.render_widget(
-        Paragraph::new("Clear the entire diagram?")
+        Paragraph::new(message)
             .style(theme.text)
             .alignment(Alignment::Center),
         Rect {

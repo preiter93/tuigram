@@ -57,25 +57,30 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `h/l` or `←/→` | Navigate left/right (participants) |
 | `j/k` or `↓/↑` | Navigate down/up (messages/notes) |
 | `H/L` or `Shift+←/→` | Move participant left/right, reverse message arrow |
+| `a/A` | Cycle message arrow style forward/backward |
 | `J/K` or `Shift+↓/↑` | Move message/note up/down* |
 | `Enter` | Edit selected |
-| `r` | Rename selected |
-| `d` | Delete selected |
+| `r` | Rename selected (participant: display name) |
+| `t` | Toggle participant/actor |
+| `D` | Delete selected |
 | `C` | Clear diagram |
-| `E` | Export to Mermaid |
+| `u` / `U` or `Ctrl+r` | Undo / redo (up to 100 steps) |
+| `E` | Save to file (opened file, else `diagram.mmd`) |
 | `?` | Help |
-| `Ctrl+c` | Quit |
+| `Ctrl+c` | Quit (asks if there are unsaved changes) |
 
 > \* `Shift+↑/↓` may not work in all terminals, some intercept these for scrollback. Use `J`/`K` instead.
 
 ## Mermaid
 
-### Export
-
-Press `M` to export the diagram to `diagram.mmd`.
-
-### Import
+### Open / Save
 
 ```
-tuigram --import diagram.mmd
+tuigram diagram.mmd
 ```
+
+`--import diagram.mmd` still works. A missing file starts an empty diagram and is created on save. Press `E` to save back to the opened file (default `diagram.mmd`); a `[+]` marker in the status bar shows unsaved changes. Saving rewrites the file in canonical format, so `%%` comments, blank lines and custom formatting are dropped.
+
+Blank lines and `%%` comments are ignored; unsupported syntax is reported with its line number.
+
+Participant aliases (`participant A as Alice`) and `actor` declarations are supported.
