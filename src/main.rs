@@ -13,9 +13,12 @@ mod ui;
 
 use clap::Parser;
 use crossterm::clipboard::CopyToClipboard;
-use ratatui::crossterm::{
-    event::{self, Event as CEvent, KeyEventKind},
-    execute,
+use ratatui::{
+    DefaultTerminal,
+    crossterm::{
+        event::{self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyEventKind},
+        execute,
+    },
 };
 use std::{
     io::ErrorKind,
@@ -83,7 +86,28 @@ fn copy_pending_clipboard(world: &mut World) {
 
 fn run(diagram: SequenceDiagram, path: Option<PathBuf>) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
-    execute!(std::io::stdout())?;
+
+    // ratatui::init() installed a hook that restores the terminal; keep it and also release the mouse.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        previous_hook(info);
+    }));
+
+    let result = run_loop(&mut terminal, diagram, path);
+
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    ratatui::restore();
+
+    result
+}
+
+fn run_loop(
+    terminal: &mut DefaultTerminal,
+    diagram: SequenceDiagram,
+    path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let _ = execute!(std::io::stdout(), EnableMouseCapture);
 
     let mut world = World::default();
     app::setup_world(&mut world, diagram, path);
@@ -91,22 +115,20 @@ fn run(diagram: SequenceDiagram, path: Option<PathBuf>) -> anyhow::Result<()> {
     loop {
         terminal.draw(|frame| app::render(frame, &mut world))?;
 
-        if event::poll(std::time::Duration::from_millis(16))?
-            && let CEvent::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app::handle_key(&mut world, key);
+        if event::poll(std::time::Duration::from_millis(16))? {
+            match event::read()? {
+                CEvent::Key(key) if key.kind == KeyEventKind::Press => {
+                    app::handle_key(&mut world, key);
+                }
+                CEvent::Mouse(mouse) => app::handle_mouse(&mut world, mouse),
+                _ => {}
+            }
         }
 
         copy_pending_clipboard(&mut world);
 
         if world.get::<app::AppState>().should_quit {
-            break;
+            return Ok(());
         }
     }
-
-    execute!(std::io::stdout())?;
-    ratatui::restore();
-
-    Ok(())
 }

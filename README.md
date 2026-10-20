@@ -78,6 +78,20 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 
 Wide diagrams scroll sideways to follow the selection; `‹` and `›` on the border mark hidden columns.
 
+## Mouse
+
+| Action | Result |
+|--------|--------|
+| Click a participant, box, message, note, frame header/footer or divider | Select it; clicking the selected item again edits it (like `Enter`) |
+| Click empty diagram space | Clear the selection |
+| Click while choosing a box or frame end | Move the cursor there; click it again to confirm |
+| Click an option in a picker (from/to, note position, box color, frame kind) | Choose it and continue |
+| Click while help is open | Close help |
+| Wheel | Scroll the diagram one event; the selection stays and the view follows it again on the next key press |
+| `Shift` + wheel or horizontal wheel | Scroll sideways |
+
+Mouse capture means the terminal no longer selects text on drag: hold `Shift` (`Option` on macOS in most terminals) while dragging to select text, or press `y` to copy the whole diagram.
+
 ## Mermaid
 
 ### Open / Save

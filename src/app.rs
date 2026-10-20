@@ -12,17 +12,23 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::{Alignment, Constraint, Flex, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 use std::{fs, mem, path::PathBuf};
 use tui_world::keys;
-use tui_world::{InputEvent, KeyBinding, Keybindings, WidgetId, World};
+use tui_world::{InputEvent, KeyBinding, Keybindings, Pointer, WidgetId, World};
 
 const DEFAULT_FILE: &str = "diagram.mmd";
 const MAX_UNDO_HISTORY: usize = 100;
+const SCROLL_COLUMNS: i16 = 4;
+const NOTE_POSITIONS: [(NotePosition, &str); 3] = [
+    (NotePosition::Right, "Right of"),
+    (NotePosition::Left, "Left of"),
+    (NotePosition::Over, "Over"),
+];
 
 pub const NORMAL: WidgetId = WidgetId("Normal");
 pub const HELP: WidgetId = WidgetId("Help");
@@ -34,6 +40,8 @@ pub const SELECT_BOX_COLOR: WidgetId = WidgetId("SelectBoxColor");
 pub const SELECT_BOX_END: WidgetId = WidgetId("SelectBoxEnd");
 pub const SELECT_FRAME_END: WidgetId = WidgetId("SelectFrameEnd");
 pub const SELECT_FRAME_KIND: WidgetId = WidgetId("SelectFrameKind");
+const DIAGRAM: WidgetId = WidgetId("Diagram");
+const PICKER: WidgetId = WidgetId("Picker");
 
 pub struct AppState {
     pub should_quit: bool,
@@ -84,6 +92,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram, path: Option<Pat
     select_box_end_keybindings(world);
     select_frame_end_keybindings(world);
     select_frame_kind_keybindings(world);
+    pointer_setup(world);
 }
 
 fn cycle_arrow_style(world: &mut World, forward: bool) {
@@ -316,6 +325,52 @@ fn remember_participant_column(world: &mut World, selection: Selection) {
 
     if column.is_some() {
         world.get_mut::<EditorState>().last_participant_index = column;
+    }
+}
+
+fn edit_selection(world: &mut World) {
+    let selection = world.get::<EditorState>().selection;
+    match selection {
+        Selection::Event(idx) => {
+            let event_data = {
+                let diagram = world.get::<SequenceDiagram>();
+                diagram.events.get(idx).cloned()
+            };
+            match event_data {
+                Some(Event::Message { from, to, text, .. }) => {
+                    let editor = world.get_mut::<EditorState>();
+                    editor.editing_event_index = Some(idx);
+                    editor.message_from = Some(from);
+                    editor.message_to = Some(to);
+                    editor.input_buffer = text;
+                    editor.selected_index = from;
+                    editor.mode = EditorMode::EditSelectFrom;
+                }
+                Some(Event::Note {
+                    position,
+                    participant_start,
+                    participant_end,
+                    text,
+                }) => {
+                    let editor = world.get_mut::<EditorState>();
+                    editor.editing_event_index = Some(idx);
+                    editor.note_position = position;
+                    editor.note_participant_start = Some(participant_start);
+                    editor.note_participant_end = Some(participant_end);
+                    editor.input_buffer = text;
+                    editor.selected_index = participant_start;
+                    editor.mode = EditorMode::EditNoteParticipant;
+                }
+                None => {}
+            }
+        }
+        Selection::Participant(idx) => {
+            start_rename_participant(world, idx);
+        }
+        Selection::Fragment(_) => start_frame(world),
+        Selection::Section(idx, k) => start_section_edit(world, idx, k),
+        Selection::Box(idx) => start_box_edit(world, idx),
+        Selection::None => {}
     }
 }
 
@@ -556,51 +611,7 @@ fn normal_keybindings(world: &mut World) {
         NORMAL,
         keys!['e', KeyBinding::key(KeyCode::Enter)],
         "Edit",
-        |world| {
-            let selection = world.get::<EditorState>().selection;
-            match selection {
-                Selection::Event(idx) => {
-                    let event_data = {
-                        let diagram = world.get::<SequenceDiagram>();
-                        diagram.events.get(idx).cloned()
-                    };
-                    match event_data {
-                        Some(Event::Message { from, to, text, .. }) => {
-                            let editor = world.get_mut::<EditorState>();
-                            editor.editing_event_index = Some(idx);
-                            editor.message_from = Some(from);
-                            editor.message_to = Some(to);
-                            editor.input_buffer = text;
-                            editor.selected_index = from;
-                            editor.mode = EditorMode::EditSelectFrom;
-                        }
-                        Some(Event::Note {
-                            position,
-                            participant_start,
-                            participant_end,
-                            text,
-                        }) => {
-                            let editor = world.get_mut::<EditorState>();
-                            editor.editing_event_index = Some(idx);
-                            editor.note_position = position;
-                            editor.note_participant_start = Some(participant_start);
-                            editor.note_participant_end = Some(participant_end);
-                            editor.input_buffer = text;
-                            editor.selected_index = participant_start;
-                            editor.mode = EditorMode::EditNoteParticipant;
-                        }
-                        None => {}
-                    }
-                }
-                Selection::Participant(idx) => {
-                    start_rename_participant(world, idx);
-                }
-                Selection::Fragment(_) => start_frame(world),
-                Selection::Section(idx, k) => start_section_edit(world, idx, k),
-                Selection::Box(idx) => start_box_edit(world, idx),
-                Selection::None => {}
-            }
-        },
+        edit_selection,
     );
 
     kb.bind(NORMAL, 'r', "Rename", |world| {
@@ -850,7 +861,9 @@ fn confirm_keybindings(world: &mut World) {
                 diagram.events.clear();
                 diagram.boxes.clear();
                 diagram.fragments.clear();
-                world.get_mut::<EditorState>().reset();
+                let editor = world.get_mut::<EditorState>();
+                editor.reset();
+                editor.clear_selection();
             }
             _ => {}
         }
@@ -1675,8 +1688,136 @@ fn handle_participant_nav(world: &mut World, delta: i32) {
 pub fn handle_key(world: &mut World, key: KeyEvent) {
     let active = active_widgets(world);
     let selection = world.get::<EditorState>().selection;
+    world.get_mut::<ScrollState>().follow = true;
     InputEvent::Key(key).handle(world, &active);
     record_history(world, selection);
+}
+
+pub fn handle_mouse(world: &mut World, mouse: MouseEvent) {
+    let selection = world.get::<EditorState>().selection;
+    let mode = world.get::<EditorState>().mode.clone();
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) if mode == EditorMode::Help => {
+            world.get_mut::<EditorState>().mode = EditorMode::Normal;
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            InputEvent::Mouse(mouse).handle(world, &[]);
+        }
+        MouseEventKind::ScrollUp
+        | MouseEventKind::ScrollDown
+        | MouseEventKind::ScrollLeft
+        | MouseEventKind::ScrollRight => scroll_wheel(world, mouse),
+        _ => {}
+    }
+
+    record_history(world, selection);
+}
+
+fn is_diagram_interactive(mode: &EditorMode) -> bool {
+    matches!(
+        mode,
+        EditorMode::Normal | EditorMode::SelectBoxEnd | EditorMode::SelectFrameEnd
+    )
+}
+
+fn scroll_wheel(world: &mut World, mouse: MouseEvent) {
+    let over_diagram = world.get::<Pointer>().hit_test(mouse.column, mouse.row) == Some(DIAGRAM);
+    if !over_diagram || !is_diagram_interactive(&world.get::<EditorState>().mode) {
+        return;
+    }
+
+    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+    let diagram = world.get::<SequenceDiagram>().clone();
+    let scroll = world.get_mut::<ScrollState>();
+
+    match mouse.kind {
+        MouseEventKind::ScrollUp if shift => scroll.scroll_x_by(-SCROLL_COLUMNS),
+        MouseEventKind::ScrollDown if shift => scroll.scroll_x_by(SCROLL_COLUMNS),
+        MouseEventKind::ScrollUp => scroll.scroll_by(-1, &diagram),
+        MouseEventKind::ScrollDown => scroll.scroll_by(1, &diagram),
+        MouseEventKind::ScrollLeft => scroll.scroll_x_by(-SCROLL_COLUMNS),
+        MouseEventKind::ScrollRight => scroll.scroll_x_by(SCROLL_COLUMNS),
+        _ => {}
+    }
+}
+
+/// Both areas start empty and are updated every frame. The picker is registered last
+/// so it sits on top of the diagram.
+fn pointer_setup(world: &mut World) {
+    let pointer = world.get_mut::<Pointer>();
+
+    pointer.set(DIAGRAM, Rect::ZERO);
+    pointer.set(PICKER, Rect::ZERO);
+
+    pointer.on_click(DIAGRAM, |world, _area, x, y| click_diagram(world, x, y));
+    pointer.on_click(PICKER, |world, area, _x, y| {
+        click_picker(world, y - area.y);
+    });
+}
+
+fn click_diagram(world: &mut World, x: u16, y: u16) {
+    let mode = world.get::<EditorState>().mode.clone();
+    let current = world.get::<EditorState>().selection;
+    let target = world.get::<ScrollState>().selection_at(x, y);
+
+    match mode {
+        EditorMode::Normal if target == Selection::None => {
+            world.get_mut::<EditorState>().clear_selection();
+        }
+        EditorMode::Normal if target == current => edit_selection(world),
+        EditorMode::Normal => {
+            remember_participant_column(world, current);
+            world.get_mut::<EditorState>().selection = target;
+            // The clicked item is on screen; scrolling now would move it from under the pointer.
+            world.get_mut::<ScrollState>().follow = false;
+        }
+        EditorMode::SelectBoxEnd if matches!(target, Selection::Participant(_)) => {
+            move_end_cursor(world, target);
+        }
+        EditorMode::SelectFrameEnd if matches!(target, Selection::Event(_)) => {
+            move_end_cursor(world, target);
+        }
+        _ => {}
+    }
+}
+
+/// Moves the cursor of a box or frame end selection; clicking it again confirms.
+fn move_end_cursor(world: &mut World, target: Selection) {
+    if world.get::<EditorState>().selection == target {
+        handle_input_confirm(world);
+    } else {
+        world.get_mut::<EditorState>().selection = target;
+        world.get_mut::<ScrollState>().follow = false;
+    }
+}
+
+/// Chooses and confirms the option in the given row of the open picker.
+fn click_picker(world: &mut World, row: u16) {
+    let row = usize::from(row);
+    let mode = world.get::<EditorState>().mode.clone();
+    let participant_count = world.get::<SequenceDiagram>().participant_count();
+    let editor = world.get_mut::<EditorState>();
+
+    match mode {
+        m if m.is_selecting_participant() && row < participant_count => {
+            editor.selected_index = row;
+        }
+        EditorMode::SelectNotePosition | EditorMode::EditNotePosition
+            if row < NOTE_POSITIONS.len() =>
+        {
+            editor.note_position = NOTE_POSITIONS[row].0;
+        }
+        EditorMode::SelectBoxColor if row < BoxColor::all().len() => {
+            editor.box_color = BoxColor::all()[row];
+        }
+        EditorMode::SelectFrameKind if row < FragmentKind::ALL.len() => {
+            editor.frame_kind = FragmentKind::ALL[row];
+        }
+        _ => return,
+    }
+
+    handle_input_confirm(world);
 }
 
 /// `selection_before` is the cursor before the key, restored by undo.
@@ -1730,6 +1871,13 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         render_sequence(frame, diagram_area, world);
     }
 
+    let diagram_hit_area = if is_empty {
+        Rect::ZERO
+    } else {
+        Block::bordered().inner(diagram_area)
+    };
+    let mut picker_area = Rect::ZERO;
+
     let editor = world.get::<EditorState>();
     let theme = world.get::<Theme>();
     let keybindings = world.get::<Keybindings>();
@@ -1755,16 +1903,16 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         | EditorMode::SelectTo
         | EditorMode::EditSelectFrom
         | EditorMode::EditSelectTo => {
-            render_dual_participant_selector(frame, area, world);
+            picker_area = render_dual_participant_selector(frame, area, world);
         }
         EditorMode::SelectNoteParticipant
         | EditorMode::SelectNoteEndParticipant
         | EditorMode::EditNoteParticipant
         | EditorMode::EditNoteEndParticipant => {
-            render_note_participant_selector(frame, area, world);
+            picker_area = render_note_participant_selector(frame, area, world);
         }
         EditorMode::SelectNotePosition | EditorMode::EditNotePosition => {
-            render_note_position_selector(frame, area, world);
+            picker_area = render_note_position_selector(frame, area, world);
         }
         EditorMode::Help => {
             render_help(frame, area, theme, keybindings, &[HELP]);
@@ -1773,13 +1921,17 @@ pub fn render(frame: &mut Frame, world: &mut World) {
             render_confirm_dialog(frame, world);
         }
         EditorMode::SelectBoxColor => {
-            render_box_color_selector(frame, area, world);
+            picker_area = render_box_color_selector(frame, area, world);
         }
         EditorMode::SelectFrameKind => {
-            render_frame_kind_selector(frame, area, world);
+            picker_area = render_frame_kind_selector(frame, area, world);
         }
         EditorMode::Normal | EditorMode::SelectBoxEnd | EditorMode::SelectFrameEnd => {}
     }
+
+    let pointer = world.get_mut::<Pointer>();
+    pointer.set(DIAGRAM, diagram_hit_area);
+    pointer.set(PICKER, picker_area);
 }
 
 fn render_empty_state(frame: &mut Frame, area: Rect, world: &World) {
@@ -1843,7 +1995,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect, world: &World) {
     );
 }
 
-fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
+fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World) -> Rect {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
@@ -1927,9 +2079,11 @@ fn render_dual_participant_selector(frame: &mut Frame, area: Rect, world: &World
             },
         );
     }
+
+    inner
 }
 
-fn render_note_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
+fn render_note_participant_selector(frame: &mut Frame, area: Rect, world: &World) -> Rect {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
@@ -1986,9 +2140,11 @@ fn render_note_participant_selector(frame: &mut Frame, area: Rect, world: &World
             },
         );
     }
+
+    inner
 }
 
-fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
+fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) -> Rect {
     let editor = world.get::<EditorState>();
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
@@ -1998,12 +2154,6 @@ fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
         .note_participant_start
         .and_then(|i| diagram.participants.get(i))
         .map_or("?", Participant::display_name);
-
-    let positions = [
-        (NotePosition::Right, "Right of"),
-        (NotePosition::Left, "Left of"),
-        (NotePosition::Over, "Over"),
-    ];
 
     let popup_width = 40.min(area.width.saturating_sub(4));
     let popup_height = 7;
@@ -2020,7 +2170,7 @@ fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
-    for (i, (pos, label)) in positions.iter().enumerate() {
+    for (i, (pos, label)) in NOTE_POSITIONS.iter().enumerate() {
         let y = inner.y + i as u16;
         let is_selected = *pos == current_position;
         let prefix = if is_selected { "▶ " } else { "  " };
@@ -2040,9 +2190,11 @@ fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
             },
         );
     }
+
+    inner
 }
 
-fn render_box_color_selector(frame: &mut Frame, area: Rect, world: &World) {
+fn render_box_color_selector(frame: &mut Frame, area: Rect, world: &World) -> Rect {
     use ratatui::style::Style;
     let editor = world.get::<EditorState>();
     let theme = world.get::<Theme>();
@@ -2111,9 +2263,11 @@ fn render_box_color_selector(frame: &mut Frame, area: Rect, world: &World) {
             },
         );
     }
+
+    inner
 }
 
-fn render_frame_kind_selector(frame: &mut Frame, area: Rect, world: &World) {
+fn render_frame_kind_selector(frame: &mut Frame, area: Rect, world: &World) -> Rect {
     let editor = world.get::<EditorState>();
     let theme = world.get::<Theme>();
 
@@ -2154,6 +2308,8 @@ fn render_frame_kind_selector(frame: &mut Frame, area: Rect, world: &World) {
             },
         );
     }
+
+    inner
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -4578,5 +4734,394 @@ mod tests {
         restore_diagram(&mut world, diagram, Selection::Section(0, 0), "Undo");
 
         assert_eq!(selection(&world), Selection::Fragment(0));
+    }
+
+    fn mouse(world: &mut World, kind: MouseEventKind, modifiers: KeyModifiers, x: u16, y: u16) {
+        handle_mouse(
+            world,
+            MouseEvent {
+                kind,
+                column: x,
+                row: y,
+                modifiers,
+            },
+        );
+    }
+
+    fn click(world: &mut World, x: u16, y: u16) {
+        let kind = MouseEventKind::Down(MouseButton::Left);
+        mouse(world, kind, KeyModifiers::NONE, x, y);
+    }
+
+    fn wheel(world: &mut World, kind: MouseEventKind, modifiers: KeyModifiers) {
+        mouse(world, kind, modifiers, 5, 5);
+    }
+
+    /// Screen position of the first cell of `text`.
+    fn find(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
+        let width = usize::from(buffer.area.width);
+        let screen = screen_text(buffer);
+        let pos = screen
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text} on screen: {screen}"));
+        let cell = screen[..pos].chars().count();
+        ((cell % width) as u16, (cell / width) as u16)
+    }
+
+    /// Draws, then clicks `dy` rows below the first cell of `text`.
+    fn click_text(world: &mut World, size: (u16, u16), text: &str, dy: u16) {
+        let buffer = draw(world, size.0, size.1);
+        let (x, y) = find(&buffer, text);
+        click(world, x, y + dy);
+    }
+
+    const MOUSE_SOURCE: &str = "sequenceDiagram\nbox Blue Team\nparticipant Alice\nparticipant Bob\nend\nAlice->>Bob: three<br>lines<br>here\nBob->>Bob: loopy\nNote over Alice: noted\nloop again\nBob->>Alice: inside\nend\n";
+
+    fn mouse_world() -> World {
+        let diagram = SequenceDiagram::from_mermaid(MOUSE_SOURCE).unwrap();
+        world_with(diagram, None)
+    }
+
+    #[test]
+    fn click_selects_participant_and_box() {
+        let mut world = mouse_world();
+
+        click_text(&mut world, (60, 40), "Bob", 0);
+        assert_eq!(selection(&world), Selection::Participant(1));
+
+        click_text(&mut world, (60, 40), "Team", 0);
+        assert_eq!(selection(&world), Selection::Box(0));
+    }
+
+    #[test]
+    fn click_selects_every_row_of_a_message_and_a_note() {
+        let mut world = mouse_world();
+
+        for text in ["three", "lines", "here"] {
+            click_text(&mut world, (60, 40), text, 0);
+            assert_eq!(selection(&world), Selection::Event(0), "{text}");
+            world.get_mut::<EditorState>().clear_selection();
+        }
+
+        // arrow row below the last label line
+        click_text(&mut world, (60, 40), "here", 1);
+        assert_eq!(selection(&world), Selection::Event(0));
+
+        // bottom row of the self-loop is two rows below its label
+        click_text(&mut world, (60, 40), "loopy", 1);
+        assert_eq!(selection(&world), Selection::Event(1));
+
+        click_text(&mut world, (60, 40), "noted", 0);
+        assert_eq!(selection(&world), Selection::Event(2));
+    }
+
+    #[test]
+    fn click_selects_frame_header_footer_and_divider() {
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::None);
+
+        click_text(&mut world, (60, 20), "┌ alt", 0);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+
+        // footer: label row, arrow row, blank row, then the frame bottom
+        world.get_mut::<EditorState>().clear_selection();
+        click_text(&mut world, (60, 20), "two", 3);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+
+        click_text(&mut world, (60, 20), "├┄", 0);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+    }
+
+    #[test]
+    fn click_on_empty_space_clears_and_border_or_status_bar_do_nothing() {
+        let mut world = mouse_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(1);
+        draw(&mut world, 60, 40);
+
+        click(&mut world, 0, 5);
+        click(&mut world, 59, 5);
+        click(&mut world, 5, 39);
+        click(&mut world, 5, 0);
+        assert_eq!(selection(&world), Selection::Event(1));
+
+        click(&mut world, 58, 30);
+        assert_eq!(selection(&world), Selection::None);
+    }
+
+    #[test]
+    fn click_on_selected_item_edits_without_changing_the_diagram() {
+        let mut world = mouse_world();
+        let before = world.get::<SequenceDiagram>().clone();
+
+        click_text(&mut world, (60, 40), "Bob", 0);
+        click_text(&mut world, (60, 40), "Bob", 0);
+        assert_eq!(
+            world.get::<EditorState>().mode,
+            EditorMode::RenameParticipant
+        );
+        press(&mut world, KeyCode::Esc);
+
+        click_text(&mut world, (60, 40), "three", 0);
+        click_text(&mut world, (60, 40), "three", 0);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::EditSelectFrom);
+
+        assert!(*world.get::<SequenceDiagram>() == before);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    fn many_messages_world(count: usize) -> World {
+        let messages = (0..count)
+            .map(|i| format!("Alice->>Bob: msg{i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!("sequenceDiagram\nparticipant Alice\nparticipant Bob\n{messages}\n");
+        world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None)
+    }
+
+    #[test]
+    fn click_after_vertical_scroll_hits_the_visible_event() {
+        let mut world = many_messages_world(20);
+        press_char(&mut world, 'G');
+        let buffer = draw(&mut world, 40, 16);
+        assert!(world.get::<ScrollState>().offset > 0);
+
+        let (x, y) = find(&buffer, "msg18");
+        click(&mut world, x, y);
+        assert_eq!(selection(&world), Selection::Event(18));
+    }
+
+    #[test]
+    fn click_after_horizontal_scroll_hits_the_right_header() {
+        let participants = (0..8)
+            .map(|i| format!("participant Participant{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!("sequenceDiagram\n{participants}\nParticipant0->>Participant7: hi\n");
+        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        world.get_mut::<EditorState>().selection = Selection::Participant(7);
+
+        let buffer = draw(&mut world, 80, 20);
+        assert!(world.get::<ScrollState>().x_offset > 0);
+        let (x, y) = find(&buffer, "Participant7");
+        click(&mut world, x, y);
+        // already selected, so the click starts editing
+        assert_eq!(
+            world.get::<EditorState>().mode,
+            EditorMode::RenameParticipant
+        );
+        press(&mut world, KeyCode::Esc);
+
+        world.get_mut::<EditorState>().clear_selection();
+        let buffer = draw(&mut world, 80, 20);
+        let first_visible = (0..8)
+            .find(|i| screen_text(&buffer).contains(&format!("Participant{i}")))
+            .unwrap();
+        assert!(first_visible > 0);
+        let (x, y) = find(&buffer, &format!("Participant{first_visible}"));
+        click(&mut world, x, y);
+        assert_eq!(selection(&world), Selection::Participant(first_visible));
+    }
+
+    #[test]
+    fn wheel_scrolls_view_but_not_selection_until_a_key() {
+        let mut world = many_messages_world(20);
+        draw(&mut world, 40, 16);
+
+        wheel(&mut world, MouseEventKind::ScrollDown, KeyModifiers::NONE);
+        draw(&mut world, 40, 16);
+        assert_eq!(world.get::<ScrollState>().offset, 1);
+        assert_eq!(selection(&world), Selection::None);
+
+        wheel(&mut world, MouseEventKind::ScrollUp, KeyModifiers::NONE);
+        wheel(&mut world, MouseEventKind::ScrollUp, KeyModifiers::NONE);
+        assert_eq!(world.get::<ScrollState>().offset, 0);
+
+        for _ in 0..50 {
+            wheel(&mut world, MouseEventKind::ScrollDown, KeyModifiers::NONE);
+        }
+        draw(&mut world, 40, 16);
+        let max = world.get::<ScrollState>().offset;
+        assert!(max > 0 && max < 20);
+
+        press_char(&mut world, 'g');
+        draw(&mut world, 40, 16);
+        assert_eq!(world.get::<ScrollState>().offset, 0);
+    }
+
+    #[test]
+    fn shift_wheel_and_horizontal_wheel_scroll_sideways_clamped() {
+        let participants = (0..8)
+            .map(|i| format!("participant Participant{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!("sequenceDiagram\n{participants}\n");
+        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        draw(&mut world, 60, 12);
+
+        wheel(&mut world, MouseEventKind::ScrollDown, KeyModifiers::SHIFT);
+        draw(&mut world, 60, 12);
+        assert_eq!(world.get::<ScrollState>().x_offset, 4);
+
+        wheel(&mut world, MouseEventKind::ScrollRight, KeyModifiers::NONE);
+        draw(&mut world, 60, 12);
+        assert_eq!(world.get::<ScrollState>().x_offset, 8);
+
+        for _ in 0..100 {
+            wheel(&mut world, MouseEventKind::ScrollRight, KeyModifiers::NONE);
+        }
+        draw(&mut world, 60, 12);
+        let max = world.get::<ScrollState>().x_offset;
+        assert!(max > 8 && max < 400);
+
+        wheel(&mut world, MouseEventKind::ScrollUp, KeyModifiers::SHIFT);
+        assert_eq!(world.get::<ScrollState>().x_offset, max - 4);
+    }
+
+    #[test]
+    fn click_in_message_picker_chooses_and_confirms() {
+        let mut world = sample_world();
+        press_char(&mut world, 'm');
+
+        click_text(&mut world, (60, 24), "  B", 0);
+        assert_eq!(world.get::<EditorState>().message_from, Some(1));
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectTo);
+    }
+
+    #[test]
+    fn click_in_note_position_picker_chooses_over() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().mode = EditorMode::SelectNotePosition;
+        world.get_mut::<EditorState>().note_participant_start = Some(0);
+
+        click_text(&mut world, (60, 24), "Over", 0);
+        assert_eq!(world.get::<EditorState>().note_position, NotePosition::Over);
+        assert_ne!(
+            world.get::<EditorState>().mode,
+            EditorMode::SelectNotePosition
+        );
+    }
+
+    #[test]
+    fn click_in_box_color_picker_chooses_green() {
+        let mut world = sample_world();
+        press_char(&mut world, 'b');
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+
+        click_text(&mut world, (60, 24), "Green", 0);
+        assert_eq!(world.get::<EditorState>().box_color, BoxColor::Green);
+        assert_ne!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+    }
+
+    #[test]
+    fn click_in_frame_kind_picker_chooses_alt() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        press_char(&mut world, 'f');
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
+
+        click_text(&mut world, (60, 24), "alt", 0);
+        assert_eq!(world.get::<SequenceDiagram>().fragments.len(), 0);
+        assert_eq!(world.get::<EditorState>().frame_kind, FragmentKind::Alt);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::InputFrameLabel);
+    }
+
+    #[test]
+    fn mouse_is_limited_by_mode() {
+        let mut world = sample_world();
+        press_char(&mut world, 'm');
+        let picker_state = (
+            world.get::<EditorState>().mode.clone(),
+            world.get::<EditorState>().selected_index,
+        );
+
+        draw(&mut world, 60, 24);
+        click(&mut world, 1, 1);
+        assert_eq!(
+            (
+                world.get::<EditorState>().mode.clone(),
+                world.get::<EditorState>().selected_index
+            ),
+            picker_state
+        );
+        press(&mut world, KeyCode::Esc);
+
+        press_char(&mut world, '?');
+        draw(&mut world, 60, 24);
+        click(&mut world, 1, 1);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn click_during_box_end_moves_cursor_and_second_click_confirms() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().selection = Selection::Participant(0);
+        press_char(&mut world, 'b');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
+
+        click_text(&mut world, (60, 24), "B", 0);
+        assert_eq!(selection(&world), Selection::Participant(1));
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
+
+        click_text(&mut world, (60, 24), "B", 0);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+    }
+
+    #[test]
+    fn click_on_frame_footer_does_not_scroll_and_second_click_edits() {
+        let messages = (0..20)
+            .map(|i| format!("Alice->>Bob: msg{i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!(
+            "sequenceDiagram\nparticipant Alice\nparticipant Bob\nloop x\n{messages}\nend\n"
+        );
+        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        press_char(&mut world, 'G');
+        let buffer = draw(&mut world, 40, 16);
+        let offset = world.get::<ScrollState>().offset;
+        let (x, y) = find(&buffer, "msg19");
+
+        click(&mut world, x, y + 3);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+        draw(&mut world, 40, 16);
+        assert_eq!(world.get::<ScrollState>().offset, offset);
+
+        click(&mut world, x, y + 3);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
+    }
+
+    #[test]
+    fn click_on_wide_message_keeps_x_offset() {
+        let participants = (0..8)
+            .map(|i| format!("participant Participant{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source =
+            format!("sequenceDiagram\n{participants}\nParticipant0->>Participant7: wide\n");
+        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        world.get_mut::<EditorState>().selection = Selection::Participant(7);
+        draw(&mut world, 80, 20);
+        let offset = world.get::<ScrollState>().x_offset;
+        assert!(offset > 0);
+
+        // right end of the arrow, which the selection would scroll toward the left
+        let buffer = draw(&mut world, 80, 20);
+        let (x, y) = find(&buffer, "▶");
+        assert!(y > 0);
+        click(&mut world, x, y);
+        assert_eq!(selection(&world), Selection::Event(0));
+        draw(&mut world, 80, 20);
+        assert_eq!(world.get::<ScrollState>().x_offset, offset);
+    }
+
+    #[test]
+    fn confirming_clear_resets_the_selection() {
+        let mut world = sample_world();
+        press_char(&mut world, 'G');
+        press_char(&mut world, 'C');
+        press_char(&mut world, 'y');
+
+        assert_eq!(selection(&world), Selection::None);
     }
 }

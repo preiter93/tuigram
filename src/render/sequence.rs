@@ -151,7 +151,9 @@ fn render_diagram(
     let selection = world.get::<EditorState>().selection;
     let area = outer_area.inner(Margin::new(0, 1));
 
-    world.get_mut::<ScrollState>().set_viewport(area.height);
+    let scroll = world.get_mut::<ScrollState>();
+    scroll.set_viewport(area.height);
+    scroll.hit_areas.clear();
 
     let visible_event = match selection {
         Selection::Event(idx) => Some(idx),
@@ -168,7 +170,9 @@ fn render_diagram(
             .map(|(at, _)| *at),
         _ => None,
     };
-    if let Some(idx) = visible_event {
+    if let Some(idx) = visible_event
+        && world.get::<ScrollState>().follow
+    {
         let diagram = world.get::<SequenceDiagram>().clone();
         world.get_mut::<ScrollState>().ensure_visible(idx, &diagram);
     }
@@ -203,7 +207,8 @@ fn render_diagram(
     let max_offset = (content_right + 3)
         .saturating_sub(area.width)
         .min(canvas_width.saturating_sub(area.width));
-    if let Some((left, right)) = selection_span(canvas, world, &participants) {
+    let follow = world.get::<ScrollState>().follow;
+    if follow && let Some((left, right)) = selection_span(canvas, world, &participants) {
         let scroll = world.get_mut::<ScrollState>();
         scroll.follow_x(left, right, area.width, max_offset);
 
@@ -219,6 +224,9 @@ fn render_diagram(
     }
     let offset = world.get::<ScrollState>().x_offset.min(max_offset);
     world.get_mut::<ScrollState>().x_offset = offset;
+
+    let areas = hit_areas(canvas, world, &participants, &rows);
+    world.get_mut::<ScrollState>().hit_areas = areas;
 
     copy_visible_columns(f, &buf, area, offset);
     let hidden_left = offset >= content_left && offset > 0;
@@ -776,6 +784,81 @@ fn event_rows(world: &World, base_y: u16) -> Vec<(usize, u16)> {
     rows
 }
 
+fn anchor_row(rows: &[(usize, u16)], idx: usize) -> Option<u16> {
+    rows.iter().find(|(i, _)| *i == idx).map(|(_, y)| *y)
+}
+
+/// Row of the frame header or divider drawn above an event.
+fn header_row(rows: &[(usize, u16)], idx: usize) -> Option<u16> {
+    anchor_row(rows, idx).map(|y| y - 2)
+}
+
+/// Row of the frame footer drawn below an event.
+fn footer_row(rows: &[(usize, u16)], diagram: &SequenceDiagram, idx: usize) -> Option<u16> {
+    anchor_row(rows, idx).map(|y| y + diagram.events[idx].height() - 1)
+}
+
+/// Clickable areas in draw order, so later (topmost) items win where they overlap.
+fn hit_areas(
+    canvas: Rect,
+    world: &World,
+    participants: &[u16],
+    rows: &[(usize, u16)],
+) -> Vec<(Rect, Selection)> {
+    let diagram = world.get::<SequenceDiagram>();
+    let mut areas = Vec::new();
+
+    let spans = box_spans(canvas, world, participants);
+    for (i, span) in spans.into_iter().enumerate() {
+        if let Some((left, right)) = span {
+            areas.push((
+                Rect::new(left, canvas.y, right - left + 1, 1),
+                Selection::Box(i),
+            ));
+        }
+    }
+
+    for (i, participant) in diagram.participants.iter().enumerate() {
+        let (x, width) = header_span(canvas, participants[i], participant);
+        let area = Rect::new(x, canvas.y + HEADER_TOP, width, 3);
+        areas.push((area, Selection::Participant(i)));
+    }
+
+    for (frame_idx, frame) in diagram.fragments.iter().enumerate() {
+        let title = frame_title(frame.kind.as_mermaid_str(), &frame.label);
+        let Some((left, width, _)) = frame_bounds(canvas, diagram, frame, &title, participants)
+        else {
+            continue;
+        };
+
+        let selection = Selection::Fragment(frame_idx);
+        if let Some(y) = header_row(rows, frame.start) {
+            areas.push((Rect::new(left, y, width, 1), selection));
+        }
+        if let Some(y) = footer_row(rows, diagram, frame.end) {
+            areas.push((Rect::new(left, y, width, 1), selection));
+        }
+
+        for (k, (at, _)) in frame.sections.iter().enumerate() {
+            if let Some(y) = header_row(rows, *at) {
+                areas.push((
+                    Rect::new(left, y, width, 1),
+                    Selection::Section(frame_idx, k),
+                ));
+            }
+        }
+    }
+
+    for &(i, y) in rows {
+        let event = &diagram.events[i];
+        let (left, right) = event_extent(event, &event_text(diagram, i), participants);
+        let area = Rect::new(left, y - 1, right - left + 1, event.height());
+        areas.push((area, Selection::Event(i)));
+    }
+
+    areas
+}
+
 fn render_fragments(
     buf: &mut Buffer,
     area: Rect,
@@ -792,7 +875,6 @@ fn render_fragments(
 
     let first_row = area.y + HEADER_HEIGHT;
     let last_row = area.y + area.height - 1;
-    let anchor = |idx: usize| rows.iter().find(|(i, _)| *i == idx).map(|(_, y)| *y);
     let editor = world.get::<EditorState>();
     let selection = editor.selection;
 
@@ -811,8 +893,8 @@ fn render_fragments(
             continue;
         }
 
-        let header_y = anchor(frame.start).map(|y| y - 2);
-        let footer_y = anchor(frame.end).map(|y| y + diagram.events[frame.end].height() - 1);
+        let header_y = header_row(rows, frame.start);
+        let footer_y = footer_row(rows, diagram, frame.end);
 
         let title = if is_preview && editor.mode == EditorMode::SelectFrameEnd {
             PREVIEW_FRAME_TITLE.to_string()
@@ -863,7 +945,7 @@ fn render_fragments(
         }
 
         for (k, (at, label)) in frame.sections.iter().enumerate() {
-            let Some(y) = anchor(*at).map(|y| y - 2) else {
+            let Some(y) = header_row(rows, *at) else {
                 continue;
             };
             if y < first_row || y > last_row {

@@ -24,7 +24,7 @@ struct HelpSection {
 
 const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
-        title: "[Navigation]",
+        title: "[Navigation/Mouse]",
         entries: &[
             HelpEntry {
                 keys: "h/l, ←/→",
@@ -37,6 +37,18 @@ const HELP_SECTIONS: &[HelpSection] = &[
             HelpEntry {
                 keys: "g/G",
                 description: "First/last message/note",
+            },
+            HelpEntry {
+                keys: "Click",
+                description: "Select (again: edit)",
+            },
+            HelpEntry {
+                keys: "Wheel",
+                description: "Scroll",
+            },
+            HelpEntry {
+                keys: "Shift+Wheel",
+                description: "Scroll sideways",
             },
         ],
     },
@@ -310,5 +322,7 @@ mod tests {
         assert!(screen.contains("Remove frame"));
         assert!(screen.contains("Add section divider"));
         assert!(screen.contains("g/G"));
+        assert!(screen.contains("[Navigation/Mouse]"));
+        assert!(screen.contains("Scroll sideways"));
     }
 }
