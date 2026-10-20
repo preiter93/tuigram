@@ -82,7 +82,9 @@ Wide diagrams scroll sideways to follow the selection; `‹` and `›` on the bo
 
 | Action | Result |
 |--------|--------|
-| Click a participant, box, message, note, frame header/footer or divider | Select it; clicking the selected item again edits it (like `Enter`) |
+| Click a participant, box, message, note, frame header/footer or divider | Select it; clicking the selected item again edits it (like `Enter`) when the button is released without moving |
+| Drag a message, note, frame (header or footer) or divider | Move it up or down like `J`/`K`; one undo step per drag. `Esc` during the drag cancels it; the view scrolls while the pointer moves past the top or bottom edge, not while it is held still |
+| Drag a participant or box | Move it left or right like `H`/`L` |
 | Click empty diagram space | Clear the selection |
 | Click while choosing a box or frame end | Move the cursor there; click it again to confirm |
 | Click an option in a picker (from/to, note position, box color, frame kind) | Choose it and continue |

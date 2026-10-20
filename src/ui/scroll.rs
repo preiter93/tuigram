@@ -12,6 +12,8 @@ pub struct ScrollState {
     pub follow: bool,
     /// Clickable areas of the last drawn frame in canvas columns and screen rows, in draw order.
     pub hit_areas: Vec<(Rect, Selection)>,
+    /// Inner diagram area of the last drawn frame.
+    pub diagram_area: Rect,
     viewport_height: u16,
 }
 
@@ -22,6 +24,7 @@ impl ScrollState {
             x_offset: 0,
             follow: true,
             hit_areas: Vec::new(),
+            diagram_area: Rect::ZERO,
             viewport_height: 0,
         }
     }

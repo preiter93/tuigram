@@ -154,6 +154,7 @@ fn render_diagram(
     let scroll = world.get_mut::<ScrollState>();
     scroll.set_viewport(area.height);
     scroll.hit_areas.clear();
+    scroll.diagram_area = area;
 
     let visible_event = match selection {
         Selection::Event(idx) => Some(idx),
@@ -796,6 +797,24 @@ fn header_row(rows: &[(usize, u16)], idx: usize) -> Option<u16> {
 /// Row of the frame footer drawn below an event.
 fn footer_row(rows: &[(usize, u16)], diagram: &SequenceDiagram, idx: usize) -> Option<u16> {
     anchor_row(rows, idx).map(|y| y + diagram.events[idx].height() - 1)
+}
+
+/// Recomputes the hit areas for the current diagram and scroll position without drawing.
+pub fn refresh_hit_areas(world: &mut World) {
+    let area = world.get::<ScrollState>().diagram_area;
+    if area.is_empty() {
+        return;
+    }
+
+    let (participants, canvas_width) = participant_layout(area, world.get::<SequenceDiagram>());
+    let canvas = Rect {
+        width: canvas_width,
+        ..area
+    };
+    let rows = event_rows(world, area.y + HEADER_HEIGHT + FIRST_MESSAGE_OFFSET);
+
+    let areas = hit_areas(canvas, world, &participants, &rows);
+    world.get_mut::<ScrollState>().hit_areas = areas;
 }
 
 /// Clickable areas in draw order, so later (topmost) items win where they overlap.

@@ -43,6 +43,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 description: "Select (again: edit)",
             },
             HelpEntry {
+                keys: "Drag",
+                description: "Move item",
+            },
+            HelpEntry {
                 keys: "Wheel",
                 description: "Scroll",
             },

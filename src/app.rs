@@ -3,11 +3,12 @@ use crate::{
         ArrowStyle, BoxColor, DEFAULT_BOX_COLOR, Event, FragmentKind, NotePosition, Participant,
         ParticipantBox, SequenceDiagram,
     },
-    render::{box_color, render_sequence},
+    render::{box_color, refresh_hit_areas, render_sequence},
     theme::Theme,
     ui::{
-        EditorMode, EditorState, Selection, confirm::render_confirm_dialog, help::render_help,
-        input::render_input_popup, scroll::ScrollState, status_bar::render_status_bar,
+        EditorMode, EditorState, HEADER_HEIGHT, Selection, confirm::render_confirm_dialog,
+        help::render_help, input::render_input_popup, scroll::ScrollState,
+        status_bar::render_status_bar,
     },
 };
 use ratatui::{
@@ -24,6 +25,8 @@ use tui_world::{InputEvent, KeyBinding, Keybindings, Pointer, WidgetId, World};
 const DEFAULT_FILE: &str = "diagram.mmd";
 const MAX_UNDO_HISTORY: usize = 100;
 const SCROLL_COLUMNS: i16 = 4;
+/// Rows the pointer must travel back before a drag reverses direction.
+const DRAG_HYSTERESIS_ROWS: u64 = 2;
 const NOTE_POSITIONS: [(NotePosition, &str); 3] = [
     (NotePosition::Right, "Right of"),
     (NotePosition::Left, "Left of"),
@@ -43,6 +46,20 @@ pub const SELECT_FRAME_KIND: WidgetId = WidgetId("SelectFrameKind");
 const DIAGRAM: WidgetId = WidgetId("Diagram");
 const PICKER: WidgetId = WidgetId("Picker");
 
+/// A left-button press on an item that can turn into a move.
+struct Drag {
+    selection_before: Selection,
+    origin: Selection,
+    moved: bool,
+    /// Doubled pointer position minus the grabbed part's center along the move axis, so the
+    /// item follows the pointer's movement instead of jumping to it.
+    grab: i64,
+    /// A frame is grabbed by its header or its footer.
+    footer: bool,
+    /// Direction and pointer target of the last accepted step.
+    last_step: Option<(bool, i64)>,
+}
+
 pub struct AppState {
     pub should_quit: bool,
     pub area: Rect,
@@ -52,6 +69,7 @@ pub struct AppState {
     undo_stack: Vec<(SequenceDiagram, Selection)>,
     redo_stack: Vec<(SequenceDiagram, Selection)>,
     committed: SequenceDiagram,
+    drag: Option<Drag>,
 }
 
 impl AppState {
@@ -77,6 +95,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram, path: Option<Pat
         undo_stack: Vec::new(),
         redo_stack: Vec::new(),
         committed: diagram.clone(),
+        drag: None,
     });
     world.insert(diagram);
     world.insert(EditorState::new());
@@ -539,15 +558,8 @@ fn normal_keybindings(world: &mut World) {
         |world| {
             let selection = world.get::<EditorState>().selection;
             match selection {
-                Selection::Participant(idx) if idx > 0 => {
-                    world
-                        .get_mut::<SequenceDiagram>()
-                        .swap_participants(idx, idx - 1);
-                    world.get_mut::<EditorState>().selection = Selection::Participant(idx - 1);
-                }
                 Selection::Event(idx) => world.get_mut::<SequenceDiagram>().point_event_left(idx),
-                Selection::Box(idx) => move_selected_box(world, idx, false),
-                _ => {}
+                _ => move_selection_sideways(world, false),
             }
         },
     );
@@ -559,18 +571,8 @@ fn normal_keybindings(world: &mut World) {
         |world| {
             let selection = world.get::<EditorState>().selection;
             match selection {
-                Selection::Participant(idx) => {
-                    let participant_count = world.get::<SequenceDiagram>().participant_count();
-                    if idx + 1 < participant_count {
-                        world
-                            .get_mut::<SequenceDiagram>()
-                            .swap_participants(idx, idx + 1);
-                        world.get_mut::<EditorState>().selection = Selection::Participant(idx + 1);
-                    }
-                }
                 Selection::Event(idx) => world.get_mut::<SequenceDiagram>().point_event_right(idx),
-                Selection::Box(idx) => move_selected_box(world, idx, true),
-                Selection::Fragment(_) | Selection::Section(..) | Selection::None => {}
+                _ => move_selection_sideways(world, true),
             }
         },
     );
@@ -1065,6 +1067,29 @@ fn move_selection(world: &mut World, down: bool) {
                 .get_mut::<SequenceDiagram>()
                 .move_section(idx, k, down);
         }
+        _ => {}
+    }
+}
+
+fn move_selection_sideways(world: &mut World, right: bool) {
+    match world.get::<EditorState>().selection {
+        Selection::Participant(idx) => {
+            let participant_count = world.get::<SequenceDiagram>().participant_count();
+            let new_idx = if right {
+                idx.checked_add(1)
+            } else {
+                idx.checked_sub(1)
+            };
+            let Some(new_idx) = new_idx.filter(|&i| i < participant_count) else {
+                return;
+            };
+
+            world
+                .get_mut::<SequenceDiagram>()
+                .swap_participants(idx, new_idx);
+            world.get_mut::<EditorState>().selection = Selection::Participant(new_idx);
+        }
+        Selection::Box(idx) => move_selected_box(world, idx, right),
         _ => {}
     }
 }
@@ -1686,6 +1711,14 @@ fn handle_participant_nav(world: &mut World, delta: i32) {
 }
 
 pub fn handle_key(world: &mut World, key: KeyEvent) {
+    if let Some(drag) = world.get_mut::<AppState>().drag.take() {
+        if key.code == KeyCode::Esc {
+            cancel_drag(world, &drag);
+            return;
+        }
+        record_history(world, drag.selection_before);
+    }
+
     let active = active_widgets(world);
     let selection = world.get::<EditorState>().selection;
     world.get_mut::<ScrollState>().follow = true;
@@ -1694,14 +1727,28 @@ pub fn handle_key(world: &mut World, key: KeyEvent) {
 }
 
 pub fn handle_mouse(world: &mut World, mouse: MouseEvent) {
-    let selection = world.get::<EditorState>().selection;
     let mode = world.get::<EditorState>().mode.clone();
+
+    // A release that never arrived leaves the drag open; commit it before a new press.
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && let Some(drag) = world.get_mut::<AppState>().drag.take()
+    {
+        record_history(world, drag.selection_before);
+    }
+
+    let selection = world
+        .get::<AppState>()
+        .drag
+        .as_ref()
+        .map_or(world.get::<EditorState>().selection, |d| d.selection_before);
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) if mode == EditorMode::Help => {
             world.get_mut::<EditorState>().mode = EditorMode::Normal;
         }
-        MouseEventKind::Down(MouseButton::Left) => {
+        MouseEventKind::Down(MouseButton::Left)
+        | MouseEventKind::Drag(MouseButton::Left)
+        | MouseEventKind::Up(MouseButton::Left) => {
             InputEvent::Mouse(mouse).handle(world, &[]);
         }
         MouseEventKind::ScrollUp
@@ -1711,7 +1758,10 @@ pub fn handle_mouse(world: &mut World, mouse: MouseEvent) {
         _ => {}
     }
 
-    record_history(world, selection);
+    // One undo step per drag, recorded when it ends.
+    if world.get::<AppState>().drag.is_none() {
+        record_history(world, selection);
+    }
 }
 
 fn is_diagram_interactive(mode: &EditorMode) -> bool {
@@ -1751,6 +1801,8 @@ fn pointer_setup(world: &mut World) {
     pointer.set(PICKER, Rect::ZERO);
 
     pointer.on_click(DIAGRAM, |world, _area, x, y| click_diagram(world, x, y));
+    pointer.on_drag(DIAGRAM, |world, _area, x, y| drag_diagram(world, x, y));
+    pointer.on_up(DIAGRAM, |world, _area, x, y| release_diagram(world, x, y));
     pointer.on_click(PICKER, |world, area, _x, y| {
         click_picker(world, y - area.y);
     });
@@ -1765,12 +1817,12 @@ fn click_diagram(world: &mut World, x: u16, y: u16) {
         EditorMode::Normal if target == Selection::None => {
             world.get_mut::<EditorState>().clear_selection();
         }
-        EditorMode::Normal if target == current => edit_selection(world),
         EditorMode::Normal => {
             remember_participant_column(world, current);
             world.get_mut::<EditorState>().selection = target;
             // The clicked item is on screen; scrolling now would move it from under the pointer.
             world.get_mut::<ScrollState>().follow = false;
+            start_drag(world, current, target, x, y);
         }
         EditorMode::SelectBoxEnd if matches!(target, Selection::Participant(_)) => {
             move_end_cursor(world, target);
@@ -1780,6 +1832,221 @@ fn click_diagram(world: &mut World, x: u16, y: u16) {
         }
         _ => {}
     }
+}
+
+/// Moves the selected item one slot at a time towards the pointer.
+fn drag_diagram(world: &mut World, x: u16, y: u16) {
+    if world.get::<EditorState>().mode != EditorMode::Normal
+        || world.get::<AppState>().drag.is_none()
+    {
+        return;
+    }
+
+    let selection = world.get::<EditorState>().selection;
+    if !matches!(selection, Selection::Participant(_) | Selection::Box(_)) {
+        autoscroll_drag(world, y);
+    }
+
+    let diagram = world.get::<SequenceDiagram>();
+    let max_steps =
+        diagram.event_count() + diagram.participant_count() + 2 * diagram.fragments.len() + 2;
+
+    let mut moved = false;
+    for _ in 0..max_steps {
+        if !drag_step(world, x, y) {
+            break;
+        }
+        moved = true;
+    }
+
+    if moved && let Some(drag) = world.get_mut::<AppState>().drag.as_mut() {
+        drag.moved = true;
+    }
+}
+
+/// Scrolls one event per drag event while the pointer is above or below the events.
+fn autoscroll_drag(world: &mut World, y: u16) {
+    let selection = world.get::<EditorState>().selection;
+    let scroll = world.get::<ScrollState>();
+    let area = scroll.diagram_area;
+    let previous_offset = scroll.offset;
+
+    let delta = if y < area.y + HEADER_HEIGHT {
+        -1
+    } else if y >= area.bottom() {
+        1
+    } else {
+        return;
+    };
+
+    let diagram = world.get::<SequenceDiagram>().clone();
+    world.get_mut::<ScrollState>().scroll_by(delta, &diagram);
+    refresh_hit_areas(world);
+
+    // Keep the grabbed part on screen so it stays within the pointer's reach.
+    let footer = world
+        .get::<AppState>()
+        .drag
+        .as_ref()
+        .is_some_and(|drag| drag.footer);
+    let on_screen = drag_center(world, selection, footer).is_some();
+    if !on_screen {
+        world.get_mut::<ScrollState>().offset = previous_offset;
+        refresh_hit_areas(world);
+    }
+}
+
+fn start_drag(world: &mut World, selection_before: Selection, origin: Selection, x: u16, y: u16) {
+    let x_in_canvas = x.saturating_add(world.get::<ScrollState>().x_offset);
+    let footer = match origin {
+        Selection::Fragment(idx) => fragment_part_rect(world, idx, true)
+            .is_some_and(|rect| rect.contains((x_in_canvas, y).into())),
+        _ => false,
+    };
+
+    let grab = match drag_center(world, origin, footer) {
+        Some(center) => drag_pointer(world, x, y) - i64::from(center),
+        None => 0,
+    };
+    world.get_mut::<AppState>().drag = Some(Drag {
+        selection_before,
+        origin,
+        moved: false,
+        grab,
+        footer,
+        last_step: None,
+    });
+}
+
+/// Doubled position of the pointer cell's center along the selection's move axis.
+fn drag_pointer(world: &World, x: u16, y: u16) -> i64 {
+    let scroll = world.get::<ScrollState>();
+    match world.get::<EditorState>().selection {
+        Selection::Participant(_) | Selection::Box(_) => {
+            2 * (i64::from(x) + i64::from(scroll.x_offset)) + 1
+        }
+        _ => 2 * i64::from(y) + 1,
+    }
+}
+
+/// The header or footer area of a frame, found by its row next to the frame's first and
+/// last event. None while that part is scrolled out of view.
+fn fragment_part_rect(world: &World, idx: usize, footer: bool) -> Option<Rect> {
+    let fragment = world.get::<SequenceDiagram>().fragments.get(idx)?;
+    let areas = &world.get::<ScrollState>().hit_areas;
+    let event_rect = |event: usize| {
+        areas
+            .iter()
+            .find(|(_, s)| *s == Selection::Event(event))
+            .map(|(rect, _)| *rect)
+    };
+
+    let row = if footer {
+        event_rect(fragment.end)?.bottom()
+    } else {
+        event_rect(fragment.start)?.y.checked_sub(1)?
+    };
+    areas
+        .iter()
+        .find(|(rect, s)| *s == Selection::Fragment(idx) && rect.y == row)
+        .map(|(rect, _)| *rect)
+}
+
+/// Doubled center of the selection along its move axis: rows for events, frames and
+/// dividers, canvas columns for participants and boxes. A frame is measured at its
+/// header or, with `footer`, at its footer.
+fn drag_center(world: &World, selection: Selection, footer: bool) -> Option<u32> {
+    let rect = match selection {
+        Selection::Fragment(idx) => fragment_part_rect(world, idx, footer)?,
+        _ => world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .find(|(_, s)| *s == selection)
+            .map(|(rect, _)| *rect)?,
+    };
+
+    match selection {
+        Selection::Participant(_) | Selection::Box(_) => {
+            Some(2 * u32::from(rect.x) + u32::from(rect.width))
+        }
+        _ => Some(2 * u32::from(rect.y) + u32::from(rect.height)),
+    }
+}
+
+/// Moves the selection one slot towards the pointer. Returns false, with nothing changed,
+/// if there is no move or the move would not bring the item closer to the pointer.
+fn drag_step(world: &mut World, x: u16, y: u16) -> bool {
+    let Some(drag) = world.get::<AppState>().drag.as_ref() else {
+        return false;
+    };
+    let (grab, footer, last_step) = (drag.grab, drag.footer, drag.last_step);
+
+    let selection = world.get::<EditorState>().selection;
+    let target = drag_pointer(world, x, y) - grab;
+    let Some(center) = drag_center(world, selection, footer) else {
+        return false;
+    };
+    let center = i64::from(center);
+    if target == center {
+        return false;
+    }
+    let towards_end = target > center;
+
+    let diagram_before = world.get::<SequenceDiagram>().clone();
+    let status_before = mem::take(&mut world.get_mut::<EditorState>().status_message);
+
+    if matches!(selection, Selection::Participant(_) | Selection::Box(_)) {
+        move_selection_sideways(world, towards_end);
+    } else {
+        move_selection(world, towards_end);
+    }
+    refresh_hit_areas(world);
+
+    let new_selection = world.get::<EditorState>().selection;
+    let changed = *world.get::<SequenceDiagram>() != diagram_before;
+
+    // Reversing needs the pointer to have travelled back, so the item doesn't flip back and
+    // forth while the pointer rests on a slot boundary.
+    let reversed_too_soon = last_step.is_some_and(|(last_towards_end, last_target)| {
+        last_towards_end != towards_end && target.abs_diff(last_target) < 2 * DRAG_HYSTERESIS_ROWS
+    });
+    let closer = drag_center(world, new_selection, footer)
+        .is_some_and(|new_center| i64::from(new_center).abs_diff(target) < center.abs_diff(target));
+    if changed && closer && !reversed_too_soon {
+        if let Some(drag) = world.get_mut::<AppState>().drag.as_mut() {
+            drag.last_step = Some((towards_end, target));
+        }
+        return true;
+    }
+
+    *world.get_mut::<SequenceDiagram>() = diagram_before;
+    let editor = world.get_mut::<EditorState>();
+    editor.selection = selection;
+    editor.status_message = status_before;
+    refresh_hit_areas(world);
+    false
+}
+
+/// Releasing on an already selected item that did not move edits it.
+fn release_diagram(world: &mut World, x: u16, y: u16) {
+    let Some(drag) = world.get_mut::<AppState>().drag.take() else {
+        return;
+    };
+
+    let is_normal = world.get::<EditorState>().mode == EditorMode::Normal;
+    let on_origin = world.get::<ScrollState>().selection_at(x, y) == drag.origin;
+    if is_normal && !drag.moved && drag.selection_before == drag.origin && on_origin {
+        edit_selection(world);
+    }
+}
+
+/// Restores the diagram from before the drag and selects the item where it started.
+fn cancel_drag(world: &mut World, drag: &Drag) {
+    let committed = world.get::<AppState>().committed.clone();
+    *world.get_mut::<SequenceDiagram>() = committed;
+    world.get_mut::<EditorState>().selection = drag.origin;
+    world.get_mut::<ScrollState>().follow = true;
 }
 
 /// Moves the cursor of a box or frame end selection; clicking it again confirms.
@@ -4753,6 +5020,17 @@ mod tests {
         mouse(world, kind, KeyModifiers::NONE, x, y);
     }
 
+    fn release(world: &mut World, x: u16, y: u16) {
+        let kind = MouseEventKind::Up(MouseButton::Left);
+        mouse(world, kind, KeyModifiers::NONE, x, y);
+    }
+
+    /// Clicks and releases at the same cell.
+    fn click_release(world: &mut World, x: u16, y: u16) {
+        click(world, x, y);
+        release(world, x, y);
+    }
+
     fn wheel(world: &mut World, kind: MouseEventKind, modifiers: KeyModifiers) {
         mouse(world, kind, modifiers, 5, 5);
     }
@@ -4768,11 +5046,11 @@ mod tests {
         ((cell % width) as u16, (cell / width) as u16)
     }
 
-    /// Draws, then clicks `dy` rows below the first cell of `text`.
+    /// Draws, then clicks and releases `dy` rows below the first cell of `text`.
     fn click_text(world: &mut World, size: (u16, u16), text: &str, dy: u16) {
         let buffer = draw(world, size.0, size.1);
         let (x, y) = find(&buffer, text);
-        click(world, x, y + dy);
+        click_release(world, x, y + dy);
     }
 
     const MOUSE_SOURCE: &str = "sequenceDiagram\nbox Blue Team\nparticipant Alice\nparticipant Bob\nend\nAlice->>Bob: three<br>lines<br>here\nBob->>Bob: loopy\nNote over Alice: noted\nloop again\nBob->>Alice: inside\nend\n";
@@ -4902,7 +5180,7 @@ mod tests {
         let buffer = draw(&mut world, 80, 20);
         assert!(world.get::<ScrollState>().x_offset > 0);
         let (x, y) = find(&buffer, "Participant7");
-        click(&mut world, x, y);
+        click_release(&mut world, x, y);
         // already selected, so the click starts editing
         assert_eq!(
             world.get::<EditorState>().mode,
@@ -5082,12 +5360,12 @@ mod tests {
         let offset = world.get::<ScrollState>().offset;
         let (x, y) = find(&buffer, "msg19");
 
-        click(&mut world, x, y + 3);
+        click_release(&mut world, x, y + 3);
         assert_eq!(selection(&world), Selection::Fragment(0));
         draw(&mut world, 40, 16);
         assert_eq!(world.get::<ScrollState>().offset, offset);
 
-        click(&mut world, x, y + 3);
+        click_release(&mut world, x, y + 3);
         assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
     }
 
@@ -5123,5 +5401,611 @@ mod tests {
         press_char(&mut world, 'y');
 
         assert_eq!(selection(&world), Selection::None);
+    }
+
+    const DRAG_SIZE: (u16, u16) = (60, 40);
+
+    const DRAG_SOURCE: &str = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nAlice->>Bob: two\nAlice->>Bob: three\nAlice->>Bob: four\n";
+
+    fn drag_world(source: &str, selection: Selection) -> World {
+        let mut world = world_with_selection(source, selection);
+        draw(&mut world, DRAG_SIZE.0, DRAG_SIZE.1);
+        world
+    }
+
+    /// The same item pressed with keys, drawn, to read target positions from.
+    fn keyed_world(source: &str, selection: Selection, keys: &str) -> World {
+        let mut world = world_with_selection(source, selection);
+        for key in keys.chars() {
+            press_char(&mut world, key);
+        }
+        draw(&mut world, DRAG_SIZE.0, DRAG_SIZE.1);
+        world
+    }
+
+    /// Screen cell in the middle of the first area drawn for the selection.
+    fn center_of(world: &World, selection: Selection) -> (u16, u16) {
+        let scroll = world.get::<ScrollState>();
+        let (rect, _) = scroll
+            .hit_areas
+            .iter()
+            .find(|(_, s)| *s == selection)
+            .unwrap_or_else(|| panic!("{selection:?} is not drawn"));
+        (
+            rect.x + rect.width / 2 - scroll.x_offset,
+            rect.y + rect.height / 2,
+        )
+    }
+
+    fn drag_event(world: &mut World, size: (u16, u16), x: u16, y: u16) {
+        let kind = MouseEventKind::Drag(MouseButton::Left);
+        mouse(world, kind, KeyModifiers::NONE, x, y);
+        draw(world, size.0, size.1);
+    }
+
+    /// Moves the pointer one cell at a time (sideways first) with a draw after each event.
+    fn drag_path(world: &mut World, size: (u16, u16), from: (u16, u16), to: (u16, u16)) {
+        let (mut x, mut y) = from;
+        while (x, y) != to {
+            if x < to.0 {
+                x += 1;
+            } else if x > to.0 {
+                x -= 1;
+            } else if y < to.1 {
+                y += 1;
+            } else {
+                y -= 1;
+            }
+            drag_event(world, size, x, y);
+        }
+    }
+
+    /// Press, drag along every cell and release.
+    fn drag_item(world: &mut World, from: (u16, u16), to: (u16, u16)) {
+        click(world, from.0, from.1);
+        drag_path(world, DRAG_SIZE, from, to);
+        release(world, to.0, to.1);
+        draw(world, DRAG_SIZE.0, DRAG_SIZE.1);
+    }
+
+    fn diagram_of(world: &World) -> String {
+        world.get::<SequenceDiagram>().to_mermaid()
+    }
+
+    #[test]
+    fn dragging_an_event_down_two_slots_is_two_shift_j() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
+        let before = diagram_of(&world);
+        let reference = keyed_world(DRAG_SOURCE, Selection::Event(0), "JJ");
+
+        let from = center_of(&world, Selection::Event(0));
+        let to = center_of(&reference, Selection::Event(2));
+        drag_item(&mut world, from, to);
+
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), Selection::Event(2));
+        assert_eq!(undo_len(&world), 1);
+
+        press_char(&mut world, 'u');
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(selection(&world), Selection::None);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    #[test]
+    fn dragging_across_a_frame_edge_enters_then_leaves_like_j() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
+        let mut world = drag_world(source, Selection::None);
+        let reference = keyed_world(source, Selection::Event(0), "JJJJ");
+
+        let from = center_of(&world, Selection::Event(0));
+        let to = center_of(&reference, Selection::Event(2));
+        click(&mut world, from.0, from.1);
+
+        let key_states: Vec<String> = (0..=4)
+            .map(|n| diagram_of(&keyed_world(source, Selection::Event(0), &"J".repeat(n))))
+            .collect();
+        assert!(key_states.contains(&diagram_of(&reference)));
+
+        let (x, mut y) = from;
+        while y < to.1 {
+            y += 1;
+            drag_event(&mut world, DRAG_SIZE, x, y);
+            eprintln!(
+                "DBG y={y} to={to:?} from={from:?} sel={:?} drag={}",
+                selection(&world),
+                world.get::<AppState>().drag.is_some()
+            );
+            assert!(key_states.contains(&diagram_of(&world)));
+        }
+        release(&mut world, x, y);
+
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(undo_len(&world), 1);
+    }
+
+    #[test]
+    fn dragging_a_frame_by_header_or_footer_moves_it_like_j() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after1\nAlice->>Bob: after2\n";
+        let frame = Selection::Fragment(0);
+
+        let reference = keyed_world(source, frame, "J");
+        let mut world = drag_world(source, Selection::None);
+        let from = center_of(&world, frame);
+        let to = center_of(&reference, frame);
+        drag_item(&mut world, from, to);
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), frame);
+
+        let mut world = drag_world(source, Selection::None);
+        let footer = world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .rfind(|(_, s)| *s == frame)
+            .map(|(rect, _)| *rect)
+            .unwrap();
+        let from = (footer.x + footer.width / 2, footer.y);
+        let moved_footer = reference
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .rfind(|(_, s)| *s == frame)
+            .map(|(rect, _)| *rect)
+            .unwrap();
+        let to = (from.0, moved_footer.y);
+        drag_item(&mut world, from, to);
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+    }
+
+    #[test]
+    fn dragging_a_divider_down_one_slot_is_shift_j() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nalt a\nAlice->>Bob: 1\nelse b\nAlice->>Bob: 2\nAlice->>Bob: 3\nend\n";
+        let divider = Selection::Section(0, 0);
+        let reference = keyed_world(source, divider, "J");
+        let mut world = drag_world(source, Selection::None);
+
+        let from = center_of(&world, divider);
+        let to = center_of(&reference, divider);
+        drag_item(&mut world, from, to);
+
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), divider);
+    }
+
+    #[test]
+    fn dragging_a_participant_right_is_shift_l_twice() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nparticipant Carol\nAlice->>Carol: hi\n";
+        let reference = keyed_world(source, Selection::Participant(0), "LL");
+        let mut world = drag_world(source, Selection::None);
+
+        let from = center_of(&world, Selection::Participant(0));
+        let to = center_of(&reference, Selection::Participant(2));
+        drag_item(&mut world, from, to);
+
+        assert_eq!(participant_ids(&world), ["Bob", "Carol", "Alice"]);
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), Selection::Participant(2));
+        assert_eq!(undo_len(&world), 1);
+    }
+
+    #[test]
+    fn dragging_a_box_right_past_a_participant_is_shift_l() {
+        let source = "sequenceDiagram\nbox Blue\nparticipant Alice\nparticipant Bob\nend\nparticipant Carol\nparticipant Dave\nAlice->>Dave: hi\n";
+        let reference = keyed_world(source, Selection::Box(0), "L");
+        let mut world = drag_world(source, Selection::None);
+
+        let from = center_of(&world, Selection::Box(0));
+        let to = center_of(&reference, Selection::Box(0));
+        drag_item(&mut world, from, to);
+
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), Selection::Box(0));
+    }
+
+    #[test]
+    fn plain_click_changes_nothing_and_second_click_edits_on_release() {
+        let mut world = mouse_world();
+        let before = diagram_of(&world);
+        let buffer = draw(&mut world, 60, 40);
+        let (x, y) = find(&buffer, "Bob");
+
+        click(&mut world, x, y);
+        release(&mut world, x, y);
+        assert_eq!(selection(&world), Selection::Participant(1));
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+
+        click(&mut world, x, y);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        release(&mut world, x, y);
+        assert_eq!(
+            world.get::<EditorState>().mode,
+            EditorMode::RenameParticipant
+        );
+
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    #[test]
+    fn dragging_away_and_back_on_a_selected_item_does_not_edit() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::Event(1));
+        let before = diagram_of(&world);
+        let from = center_of(&world, Selection::Event(1));
+        let away = (from.0, from.1 + 4);
+
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, away);
+        assert_ne!(diagram_of(&world), before);
+        drag_path(&mut world, DRAG_SIZE, away, from);
+        release(&mut world, from.0, from.1);
+
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    #[test]
+    fn releasing_off_the_item_without_moving_does_not_edit() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::Event(1));
+        let from = center_of(&world, Selection::Event(1));
+
+        click(&mut world, from.0, from.1);
+        drag_event(&mut world, DRAG_SIZE, 1, from.1);
+        release(&mut world, 1, from.1);
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    #[test]
+    fn jittering_by_a_row_near_the_switch_point_moves_at_most_once() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
+        let from = center_of(&world, Selection::Event(1));
+        let before = diagram_of(&world);
+        click(&mut world, from.0, from.1);
+
+        let mut changes = 0;
+        let mut previous = before.clone();
+        for step in 0..8 {
+            drag_event(&mut world, DRAG_SIZE, from.0, from.1 + 2 + (step % 2));
+            let current = diagram_of(&world);
+            if current != previous {
+                changes += 1;
+            }
+            previous = current;
+        }
+
+        assert_eq!(changes, 1);
+        assert_ne!(previous, before);
+    }
+
+    #[test]
+    fn dragging_an_event_past_a_frame_and_all_the_way_back_returns_it() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
+        let mut world = drag_world(source, Selection::None);
+        let before = diagram_of(&world);
+        let reference = keyed_world(source, Selection::Event(0), "JJJJ");
+
+        let from = center_of(&world, Selection::Event(0));
+        let far = center_of(&reference, Selection::Event(2));
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, far);
+        assert_ne!(diagram_of(&world), before);
+        drag_path(&mut world, DRAG_SIZE, far, from);
+        release(&mut world, from.0, from.1);
+
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(selection(&world), Selection::Event(0));
+    }
+
+    #[test]
+    fn reversing_inside_a_frame_works_once_the_pointer_travelled_back() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
+        let mut world = drag_world(source, Selection::None);
+        let before = diagram_of(&world);
+        let from = center_of(&world, Selection::Event(0));
+
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, (from.0, from.1 + 4));
+        assert_ne!(diagram_of(&world), before);
+        drag_path(&mut world, DRAG_SIZE, (from.0, from.1 + 4), from);
+        release(&mut world, from.0, from.1);
+
+        assert_eq!(diagram_of(&world), before);
+    }
+
+    #[test]
+    fn grabbing_a_footer_whose_header_is_scrolled_off_does_not_jump_to_the_header() {
+        let messages = (0..12)
+            .map(|i| format!("Alice->>Bob: m{i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let source = format!(
+            "sequenceDiagram\nparticipant Alice\nparticipant Bob\n{messages}loop x\nAlice->>Bob: e1\nAlice->>Bob: e2\nAlice->>Bob: e3\nend\n{messages}"
+        );
+        let frame = Selection::Fragment(0);
+        let mut world = world_with_selection(&source, Selection::None);
+        let start = world.get::<SequenceDiagram>().fragments[0].start;
+        world.get_mut::<ScrollState>().offset = start + 2;
+        world.get_mut::<ScrollState>().follow = false;
+        draw(&mut world, 60, 24);
+
+        let footer = world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .rfind(|(_, s)| *s == frame)
+            .map(|(rect, _)| *rect)
+            .unwrap();
+        let frame_areas = world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .filter(|(_, s)| *s == frame)
+            .count();
+        assert_eq!(frame_areas, 1);
+        let x = footer.x + footer.width / 2;
+        let top = world.get::<ScrollState>().diagram_area.y;
+
+        click(&mut world, x, footer.y);
+        drag_event(&mut world, (60, 24), x, top + 1);
+        release(&mut world, x, top + 1);
+
+        let moved = start - world.get::<SequenceDiagram>().fragments[0].start;
+        assert!((1..=2).contains(&moved), "moved {moved}");
+    }
+
+    #[test]
+    fn grabbing_the_bottom_row_of_a_tall_message_and_wiggling_sideways_does_not_move() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nAlice->>Bob: a<br>b<br>c\nAlice->>Bob: three\n";
+        let mut world = drag_world(source, Selection::Event(1));
+        let before = diagram_of(&world);
+        let rect = world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .find(|(_, s)| *s == Selection::Event(1))
+            .map(|(rect, _)| *rect)
+            .unwrap();
+        let (x, y) = (rect.x + rect.width / 2, rect.y + rect.height - 1);
+
+        click(&mut world, x, y);
+        drag_event(&mut world, DRAG_SIZE, x + 1, y);
+        release(&mut world, x + 1, y);
+
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::EditSelectFrom);
+    }
+
+    #[test]
+    fn grabbing_the_edge_of_a_wide_participant_and_wiggling_down_does_not_move() {
+        let source = "sequenceDiagram\nparticipant AVeryLongParticipantName\nparticipant Bob\nparticipant Carol\n";
+        let mut world = drag_world(source, Selection::None);
+        let before = diagram_of(&world);
+        let rect = world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .find(|(_, s)| *s == Selection::Participant(0))
+            .map(|(rect, _)| *rect)
+            .unwrap();
+        let (x, y) = (rect.x + rect.width - 1, rect.y + 1);
+
+        click(&mut world, x, y);
+        drag_event(&mut world, DRAG_SIZE, x, y + 1);
+        drag_event(&mut world, DRAG_SIZE, x, y);
+
+        assert_eq!(diagram_of(&world), before);
+    }
+
+    #[test]
+    fn grabbing_a_frame_by_the_footer_and_jumping_up_moves_it_up_only() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: b1\nAlice->>Bob: b2\nloop x\nAlice->>Bob: e1\nAlice->>Bob: e2\nAlice->>Bob: e3\nAlice->>Bob: e4\nend\n";
+        let frame = Selection::Fragment(0);
+        let mut world = drag_world(source, Selection::None);
+        let initial_start = world.get::<SequenceDiagram>().fragments[0].start;
+        let footer = world
+            .get::<ScrollState>()
+            .hit_areas
+            .iter()
+            .rfind(|(_, s)| *s == frame)
+            .map(|(rect, _)| *rect)
+            .unwrap();
+        let x = footer.x + footer.width / 2;
+        let upper_half = center_of(&world, Selection::Event(3)).1;
+
+        click(&mut world, x, footer.y);
+        drag_event(&mut world, DRAG_SIZE, x, upper_half);
+        release(&mut world, x, upper_half);
+
+        assert!(world.get::<SequenceDiagram>().fragments[0].start < initial_start);
+        assert_eq!(selection(&world), frame);
+    }
+
+    #[test]
+    fn escape_during_drag_restores_the_diagram_and_ignores_the_rest() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
+        let before = diagram_of(&world);
+        let from = center_of(&world, Selection::Event(0));
+        let to = center_of(&world, Selection::Event(2));
+
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, to);
+        assert_ne!(diagram_of(&world), before);
+
+        press(&mut world, KeyCode::Esc);
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(selection(&world), Selection::Event(0));
+        assert_eq!(undo_len(&world), 0);
+
+        drag_event(&mut world, DRAG_SIZE, to.0, to.1 + 2);
+        release(&mut world, to.0, to.1 + 2);
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    #[test]
+    fn other_key_during_drag_commits_one_undo_step_then_acts() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
+        let from = center_of(&world, Selection::Event(0));
+        let to = center_of(&world, Selection::Event(2));
+
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, to);
+        assert_eq!(undo_len(&world), 0);
+
+        press_char(&mut world, 'k');
+        assert_eq!(undo_len(&world), 1);
+        assert_eq!(selection(&world), Selection::Event(1));
+        assert_eq!(event_texts(&world), ["two", "three", "one", "four"]);
+
+        release(&mut world, to.0, to.1);
+        assert_eq!(undo_len(&world), 1);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+    }
+
+    #[test]
+    fn dragging_works_after_vertical_scroll() {
+        let size = (60, 24);
+        let mut world = many_messages_world(30);
+        press_char(&mut world, 'G');
+        draw(&mut world, size.0, size.1);
+        assert!(world.get::<ScrollState>().offset > 0);
+
+        let mut reference = many_messages_world(30);
+        press_char(&mut reference, 'G');
+        press_char(&mut reference, 'K');
+        press_char(&mut reference, 'K');
+        draw(&mut reference, size.0, size.1);
+
+        let from = center_of(&world, Selection::Event(29));
+        let to = center_of(&world, Selection::Event(27));
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, size, from, to);
+        release(&mut world, to.0, to.1);
+
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), Selection::Event(27));
+        assert_eq!(undo_len(&world), 1);
+    }
+
+    #[test]
+    fn dragging_below_the_diagram_scrolls_and_keeps_moving() {
+        let size = (60, 16);
+        let mut world = many_messages_world(30);
+        draw(&mut world, size.0, size.1);
+        let from = center_of(&world, Selection::Event(0));
+        let bottom = world.get::<ScrollState>().diagram_area.bottom();
+
+        click(&mut world, from.0, from.1);
+        for _ in 0..12 {
+            drag_event(&mut world, size, from.0, bottom);
+        }
+        release(&mut world, from.0, bottom);
+
+        assert!(world.get::<ScrollState>().offset > 0);
+        let Selection::Event(idx) = selection(&world) else {
+            panic!("event not selected");
+        };
+        assert!(idx > 5);
+        assert_eq!(undo_len(&world), 1);
+    }
+
+    #[test]
+    fn dragging_a_participant_works_after_horizontal_scroll() {
+        let size = (80, 20);
+        let mut world = wide_world("Participant1->>Participant8: hi\n");
+        world.get_mut::<EditorState>().selection = Selection::Participant(7);
+        draw(&mut world, size.0, size.1);
+        assert!(x_offset(&world) > 0);
+
+        let mut reference = wide_world("Participant1->>Participant8: hi\n");
+        reference.get_mut::<EditorState>().selection = Selection::Participant(7);
+        press_char(&mut reference, 'H');
+        draw(&mut reference, size.0, size.1);
+
+        let from = center_of(&world, Selection::Participant(7));
+        let target = center_of(&reference, Selection::Participant(6));
+        let to = (
+            (target.0 + x_offset(&reference)).saturating_sub(x_offset(&world)),
+            target.1,
+        );
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, size, from, to);
+        release(&mut world, to.0, to.1);
+
+        assert_eq!(diagram_of(&world), diagram_of(&reference));
+        assert_eq!(selection(&world), Selection::Participant(6));
+    }
+
+    #[test]
+    fn dragging_in_other_modes_changes_nothing() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
+        let before = diagram_of(&world);
+        let from = center_of(&world, Selection::Event(0));
+        let to = center_of(&world, Selection::Event(2));
+
+        press_char(&mut world, 'm');
+        let mode = world.get::<EditorState>().mode.clone();
+        assert_ne!(mode, EditorMode::Normal);
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, to);
+        release(&mut world, to.0, to.1);
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(world.get::<EditorState>().mode, mode);
+
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
+        click(&mut world, from.0, from.1);
+        world.get_mut::<EditorState>().mode = EditorMode::Help;
+        drag_path(&mut world, DRAG_SIZE, from, to);
+        assert_eq!(diagram_of(&world), before);
+    }
+
+    #[test]
+    fn dragging_an_event_never_changes_its_arrow_direction() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nBob->>Alice: two\nAlice->>Bob: three\n";
+        let mut world = drag_world(source, Selection::None);
+        let from = center_of(&world, Selection::Event(1));
+        let down = center_of(&world, Selection::Event(2));
+        let (left, right) = (from.0.saturating_sub(10), from.0 + 10);
+
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, (right, down.1));
+        drag_path(&mut world, DRAG_SIZE, (right, down.1), (left, from.1 - 2));
+        release(&mut world, left, from.1 - 2);
+
+        let diagram = world.get::<SequenceDiagram>();
+        let two = diagram
+            .events
+            .iter()
+            .find_map(|e| match e {
+                Event::Message { from, to, text, .. } if text == "two" => Some((*from, *to)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(two, (1, 0));
+    }
+
+    #[test]
+    fn refresh_hit_areas_equals_the_areas_of_a_full_draw() {
+        let mut world = mouse_world();
+        draw(&mut world, 60, 40);
+        let drawn = world.get::<ScrollState>().hit_areas.clone();
+        assert!(drawn.len() > 3);
+
+        world.get_mut::<ScrollState>().hit_areas.clear();
+        refresh_hit_areas(&mut world);
+        assert_eq!(world.get::<ScrollState>().hit_areas, drawn);
+
+        let mut world = many_messages_world(30);
+        press_char(&mut world, 'G');
+        draw(&mut world, 60, 16);
+        let drawn = world.get::<ScrollState>().hit_areas.clone();
+
+        world.get_mut::<ScrollState>().hit_areas.clear();
+        refresh_hit_areas(&mut world);
+        assert_eq!(world.get::<ScrollState>().hit_areas, drawn);
     }
 }
