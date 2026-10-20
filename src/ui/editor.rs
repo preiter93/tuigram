@@ -1,6 +1,6 @@
 use super::Selection;
-use crate::core::BoxColor;
 use crate::core::NotePosition;
+use crate::core::{BoxColor, FragmentKind};
 use std::time::{Duration, Instant};
 
 const STATUS_DURATION: Duration = Duration::from_millis(1000);
@@ -33,6 +33,9 @@ pub enum EditorMode {
     SelectBoxEnd,
     SelectBoxColor,
     InputBoxLabel,
+    SelectFrameEnd,
+    SelectFrameKind,
+    InputFrameLabel,
     InputSavePath,
 }
 
@@ -67,6 +70,7 @@ impl EditorMode {
                 | Self::InputNoteText
                 | Self::EditNoteText
                 | Self::InputBoxLabel
+                | Self::InputFrameLabel
                 | Self::InputSavePath
         )
     }
@@ -93,10 +97,15 @@ pub struct EditorState {
     pub note_position: NotePosition,
     pub note_participant_start: Option<usize>,
     pub note_participant_end: Option<usize>,
-    pub insert_after_index: Option<usize>,
+    pub insert_anchor: Option<usize>,
+    pub insert_before: bool,
+    pub insert_frame: Option<usize>,
     pub box_start: Option<usize>,
     pub box_end: Option<usize>,
     pub box_color: BoxColor,
+    pub frame_start: Option<usize>,
+    pub frame_end: Option<usize>,
+    pub frame_kind: FragmentKind,
 }
 
 impl EditorState {
@@ -115,10 +124,15 @@ impl EditorState {
         self.note_position = NotePosition::default();
         self.note_participant_start = None;
         self.note_participant_end = None;
-        self.insert_after_index = None;
+        self.insert_anchor = None;
+        self.insert_before = false;
+        self.insert_frame = None;
         self.box_start = None;
         self.box_end = None;
         self.box_color = BoxColor::default();
+        self.frame_start = None;
+        self.frame_end = None;
+        self.frame_kind = FragmentKind::default();
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

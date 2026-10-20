@@ -28,11 +28,15 @@ const HELP_SECTIONS: &[HelpSection] = &[
         entries: &[
             HelpEntry {
                 keys: "h/l, ←/→",
-                description: "Select participant",
+                description: "Select participant/box",
             },
             HelpEntry {
                 keys: "j/k, ↓/↑",
                 description: "Select message/note",
+            },
+            HelpEntry {
+                keys: "g/G",
+                description: "First/last message/note",
             },
         ],
     },
@@ -69,6 +73,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 description: "Toggle participant/actor",
             },
             HelpEntry {
+                keys: "#",
+                description: "Toggle autonumber",
+            },
+            HelpEntry {
                 keys: "D",
                 description: "Delete selected",
             },
@@ -91,16 +99,16 @@ const HELP_SECTIONS: &[HelpSection] = &[
         entries: &[
             HelpEntry {
                 keys: "H/L, ⇧←/→",
-                description: "Move participant/arrow",
+                description: "Move participant/box/arrow",
             },
             HelpEntry {
                 keys: "J/K, ⇧↓/↑",
-                description: "Move message/note up/down",
+                description: "Move event/frame up/down",
             },
         ],
     },
     HelpSection {
-        title: "[Box]",
+        title: "[Box/Frame]",
         entries: &[
             HelpEntry {
                 keys: "b",
@@ -108,7 +116,15 @@ const HELP_SECTIONS: &[HelpSection] = &[
             },
             HelpEntry {
                 keys: "B",
-                description: "Remove box at participant",
+                description: "Remove box",
+            },
+            HelpEntry {
+                keys: "f",
+                description: "Add/edit frame at event",
+            },
+            HelpEntry {
+                keys: "F",
+                description: "Remove frame",
             },
         ],
     },
@@ -180,8 +196,8 @@ pub fn render_help(
     }
 
     let lines = section_lines(HELP_SECTIONS, theme);
-    let width = column_width(HELP_SECTIONS).max(left_width) + 2;
-    let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+    let width = column_width(HELP_SECTIONS) + 2;
+    let height = (lines.len() as u16 + 2).min(area.height);
     let popup_area = centered_rect(width.min(area.width), height, area);
 
     frame.render_widget(Clear, popup_area);
@@ -286,5 +302,8 @@ mod tests {
         assert!(screen.contains("[Other]"));
         assert!(screen.contains("Copy Mermaid to clipboard"));
         assert!(screen.contains("Quit"));
+        assert!(screen.contains("Toggle autonumber"));
+        assert!(screen.contains("Remove frame"));
+        assert!(screen.contains("g/G"));
     }
 }

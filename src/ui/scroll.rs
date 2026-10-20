@@ -1,11 +1,12 @@
 use ratatui::widgets::ScrollbarState;
 use std::ops::Range;
 
-use crate::core::{Event, SequenceDiagram};
+use crate::core::SequenceDiagram;
 use crate::ui::HEADER_HEIGHT;
 
 pub struct ScrollState {
     pub offset: usize,
+    pub x_offset: u16,
     viewport_height: u16,
 }
 
@@ -13,12 +14,14 @@ impl ScrollState {
     pub fn new() -> Self {
         Self {
             offset: 0,
+            x_offset: 0,
             viewport_height: 0,
         }
     }
 
     pub fn set_viewport(&mut self, height: u16) {
-        self.viewport_height = height.saturating_sub(HEADER_HEIGHT);
+        // One more row than the header: events start one row below the lifeline start.
+        self.viewport_height = height.saturating_sub(HEADER_HEIGHT + 1);
     }
 
     pub fn ensure_visible(&mut self, index: usize, diagram: &SequenceDiagram) {
@@ -31,15 +34,31 @@ impl ScrollState {
         }
     }
 
+    /// Scrolls sideways so the canvas columns `left..=right` are inside the border.
+    /// A span wider than the view keeps its left edge visible.
+    pub fn follow_x(&mut self, left: u16, right: u16, viewport: u16, max_offset: u16) {
+        let last_visible = self.x_offset + viewport.saturating_sub(2);
+
+        if right > last_visible {
+            self.x_offset = (right + 2).saturating_sub(viewport);
+        }
+        if left < self.x_offset + 1 {
+            self.x_offset = left.saturating_sub(1);
+        }
+
+        self.x_offset = self.x_offset.min(max_offset);
+    }
+
     pub fn visible_range(&self, diagram: &SequenceDiagram) -> Range<usize> {
         let mut height_used: u16 = 0;
         let mut end = self.offset;
 
-        for event in diagram.events.iter().skip(self.offset) {
-            if height_used + event.height() > self.viewport_height {
+        for i in self.offset..diagram.event_count() {
+            let height = diagram.event_height(i);
+            if height_used + height > self.viewport_height {
                 break;
             }
-            height_used += event.height();
+            height_used += height;
             end += 1;
         }
 
@@ -61,7 +80,7 @@ impl ScrollState {
         let mut offset = index;
 
         for i in (0..=index).rev() {
-            let event_height = diagram.events.get(i).map_or(3, Event::height);
+            let event_height = diagram.event_height(i);
             if height + event_height > self.viewport_height {
                 break;
             }
@@ -73,6 +92,73 @@ impl ScrollState {
     }
 
     fn total_height(diagram: &SequenceDiagram) -> u16 {
-        diagram.events.iter().map(Event::height).sum()
+        (0..diagram.event_count())
+            .map(|i| diagram.event_height(i))
+            .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn diagram(with_frame: bool) -> SequenceDiagram {
+        let frame = if with_frame { "loop\n" } else { "" };
+        let end = if with_frame { "end\n" } else { "" };
+        let source = format!("sequenceDiagram\n{frame}A->>B: 1\n{end}A->>B: 2\nA->>B: 3\n");
+        SequenceDiagram::from_mermaid(&source).unwrap()
+    }
+
+    #[test]
+    fn viewport_counts_frame_header_and_footer_rows() {
+        let mut scroll = ScrollState::new();
+        scroll.set_viewport(HEADER_HEIGHT + 1 + 9);
+
+        assert_eq!(scroll.visible_range(&diagram(false)), 0..3);
+        assert_eq!(scroll.visible_range(&diagram(true)), 0..2);
+    }
+
+    #[test]
+    fn follow_x_keeps_visible_span_in_place() {
+        let mut scroll = ScrollState::new();
+        scroll.follow_x(10, 20, 40, 100);
+
+        assert_eq!(scroll.x_offset, 0);
+    }
+
+    #[test]
+    fn follow_x_scrolls_right_until_span_ends_inside_border() {
+        let mut scroll = ScrollState::new();
+        scroll.follow_x(50, 60, 40, 100);
+
+        // visible columns are 23..=60
+        assert_eq!(scroll.x_offset, 22);
+    }
+
+    #[test]
+    fn follow_x_scrolls_left_until_span_starts_inside_border() {
+        let mut scroll = ScrollState::new();
+        scroll.x_offset = 30;
+        scroll.follow_x(10, 15, 40, 100);
+
+        assert_eq!(scroll.x_offset, 9);
+    }
+
+    #[test]
+    fn follow_x_prefers_left_edge_of_wide_span() {
+        let mut scroll = ScrollState::new();
+        scroll.x_offset = 5;
+        scroll.follow_x(20, 90, 40, 100);
+
+        assert_eq!(scroll.x_offset, 19);
+    }
+
+    #[test]
+    fn follow_x_clamps_to_max_offset() {
+        let mut scroll = ScrollState::new();
+        scroll.x_offset = 50;
+        scroll.follow_x(60, 65, 40, 10);
+
+        assert_eq!(scroll.x_offset, 10);
     }
 }

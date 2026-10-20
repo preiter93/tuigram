@@ -1,3 +1,6 @@
+/// Color used for boxes without one of the named Mermaid colors.
+pub const DEFAULT_BOX_COLOR: BoxColor = BoxColor::Gray;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum NotePosition {
     #[default]
@@ -128,6 +131,79 @@ impl Event {
         match self {
             Self::Message { .. } => 3,
             Self::Note { .. } => 2,
+        }
+    }
+
+    pub const fn endpoints(&self) -> (usize, usize) {
+        match self {
+            Self::Message { from, to, .. } => (*from, *to),
+            Self::Note {
+                participant_start,
+                participant_end,
+                ..
+            } => (*participant_start, *participant_end),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FragmentKind {
+    #[default]
+    Loop,
+    Opt,
+    Break,
+    Critical,
+}
+
+impl FragmentKind {
+    pub const ALL: [Self; 4] = [Self::Loop, Self::Opt, Self::Break, Self::Critical];
+
+    pub fn as_mermaid_str(self) -> &'static str {
+        match self {
+            Self::Loop => "loop",
+            Self::Opt => "opt",
+            Self::Break => "break",
+            Self::Critical => "critical",
+        }
+    }
+
+    pub fn from_mermaid_str(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_mermaid_str() == s)
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|k| *k == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|k| *k == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn split_header(line: &str) -> Option<(Self, String)> {
+        let line = line.trim();
+        let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        let kind = Self::from_mermaid_str(word)?;
+        Some((kind, rest.trim().to_string()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fragment {
+    pub kind: FragmentKind,
+    pub label: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Fragment {
+    pub fn header(&self) -> String {
+        let kind = self.kind.as_mermaid_str();
+        if self.label.is_empty() {
+            kind.to_string()
+        } else {
+            format!("{kind} {}", self.label)
         }
     }
 }

@@ -1,3 +1,3 @@
 mod sequence;
 
-pub use sequence::render_sequence;
+pub use sequence::{box_color, render_sequence};

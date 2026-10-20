@@ -49,10 +49,19 @@ pub fn render_status_bar(
         EditorMode::SelectBoxEnd => ("BOX END", theme.status_select),
         EditorMode::SelectBoxColor => ("BOX COLOR", theme.status_select),
         EditorMode::InputBoxLabel => ("BOX LABEL", theme.status_input),
+        EditorMode::SelectFrameEnd => ("FRAME END", theme.status_select),
+        EditorMode::SelectFrameKind => ("FRAME KIND", theme.status_select),
+        EditorMode::InputFrameLabel => ("FRAME", theme.status_input),
         EditorMode::InputSavePath => ("SAVE AS", theme.status_input),
     };
 
     let hints = match mode {
+        EditorMode::Normal if matches!(editor.selection, Selection::Box(_)) => {
+            "H/L: move  Enter: edit  D: remove box  p: participant  ?: help"
+        }
+        EditorMode::Normal if matches!(editor.selection, Selection::Fragment(_)) => {
+            "J/K: move  Enter: edit  D: remove frame  m/M: message  ?: help"
+        }
         EditorMode::Normal => {
             if participant_count < 2 {
                 if has_selection {
@@ -73,6 +82,7 @@ pub fn render_status_bar(
         | EditorMode::InputNoteText
         | EditorMode::EditNoteText
         | EditorMode::InputBoxLabel
+        | EditorMode::InputFrameLabel
         | EditorMode::InputSavePath => "Enter: confirm  Esc: cancel",
         EditorMode::SelectFrom
         | EditorMode::SelectTo
@@ -88,6 +98,8 @@ pub fn render_status_bar(
             "↑↓: change position  Enter: confirm  Esc: cancel"
         }
         EditorMode::SelectBoxColor => "↑↓: change color  Enter: confirm  Esc: cancel",
+        EditorMode::SelectFrameEnd => "↑↓: extend frame  Enter: select  Esc: cancel",
+        EditorMode::SelectFrameKind => "↑↓: change kind  Enter: confirm  Esc: cancel",
         EditorMode::Help => "any key: close",
         EditorMode::ConfirmClear | EditorMode::ConfirmQuit => "y/Enter: confirm  n/Esc: cancel",
     };
