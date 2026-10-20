@@ -127,7 +127,7 @@ impl SequenceDiagram {
         }
     }
 
-    /// The frame and divider index of the divider right above the event.
+    /// (frame index, divider index)
     pub fn section_at(&self, event_idx: usize) -> Option<(usize, usize)> {
         self.fragments.iter().enumerate().find_map(|(i, f)| {
             let k = f.sections.iter().position(|(at, _)| *at == event_idx)?;
@@ -135,7 +135,6 @@ impl SequenceDiagram {
         })
     }
 
-    /// Rows a frame header or divider takes above the event: 0 or 1.
     pub fn rows_above(&self, idx: usize) -> u16 {
         let header = self.fragments.iter().any(|f| f.start == idx);
         u16::from(header || self.section_at(idx).is_some())
@@ -223,9 +222,7 @@ impl SequenceDiagram {
         self.events.len()
     }
 
-    /// Inserts next to the anchor event and returns the new index. The new
-    /// event joins the anchor's frame and section; without an anchor it is
-    /// appended.
+    /// The new event joins the anchor's frame and section; without an anchor it is appended.
     pub fn insert_relative(&mut self, anchor: Option<usize>, before: bool, event: Event) -> usize {
         let (a, b) = event.endpoints();
         debug_assert!(a < self.participants.len() && b < self.participants.len());
@@ -241,8 +238,7 @@ impl SequenceDiagram {
         at
     }
 
-    /// Inserts at the frame's first row: inside as its first event, or above
-    /// its header. Returns the new index.
+    /// Inserts at the frame's first row: inside as its first event, or above its header.
     pub fn insert_at_frame(&mut self, frame_idx: usize, inside: bool, event: Event) -> usize {
         let at = self.fragments[frame_idx].start;
         self.insert_event(at, event, inside.then_some(frame_idx), false);
@@ -290,9 +286,7 @@ impl SequenceDiagram {
         }
     }
 
-    /// Moves an event one step. At a frame edge the event crosses the border
-    /// and at a divider the divider moves instead of reordering. Returns the
-    /// event's new index.
+    /// At a frame edge the event crosses the border; at a divider the divider moves instead.
     pub fn move_event(&mut self, idx: usize, down: bool) -> usize {
         if idx >= self.events.len() {
             return idx;
@@ -352,8 +346,6 @@ impl SequenceDiagram {
         idx - 1
     }
 
-    /// Moves a whole frame past the next unframed event or swaps it with an
-    /// adjacent frame. Returns the frame's new index.
     pub fn move_fragment(&mut self, idx: usize, down: bool) -> usize {
         let Some(frame) = self.fragments.get(idx) else {
             return idx;
@@ -406,8 +398,7 @@ impl SequenceDiagram {
         f.drop_empty_sections();
     }
 
-    /// Starts a new section at the event. Returns the divider's index in the
-    /// frame, or None if the frame has no dividers or the spot is not valid.
+    /// None if the frame has no dividers or the spot is not valid.
     pub fn add_section(&mut self, frame_idx: usize, at: usize, label: String) -> Option<usize> {
         let f = self.fragments.get_mut(frame_idx)?;
         f.kind.divider()?;
@@ -423,7 +414,7 @@ impl SequenceDiagram {
         Some(k)
     }
 
-    /// Merges the section into the one above; the events stay.
+    /// Merges into the section above; the events stay.
     pub fn remove_section(&mut self, frame_idx: usize, k: usize) {
         if let Some(f) = self.fragments.get_mut(frame_idx)
             && k < f.sections.len()
@@ -432,7 +423,7 @@ impl SequenceDiagram {
         }
     }
 
-    /// Moves a divider by one event without emptying a section.
+    /// Never empties a section.
     pub fn move_section(&mut self, frame_idx: usize, k: usize, down: bool) {
         let Some(f) = self.fragments.get_mut(frame_idx) else {
             return;
@@ -490,8 +481,6 @@ impl SequenceDiagram {
         }
     }
 
-    /// Moves participants `start..=end` one step by passing the neighbour
-    /// on the other side through the block.
     fn move_participant_block(&mut self, start: usize, end: usize, right: bool) {
         if right {
             for i in (start..=end).rev() {
@@ -504,8 +493,6 @@ impl SequenceDiagram {
         }
     }
 
-    /// Moves a whole box past the neighbouring unboxed participant or swaps it
-    /// with an adjacent box. Returns the box's new index.
     pub fn move_box(&mut self, idx: usize, right: bool) -> usize {
         let Some(current) = self.boxes.get(idx) else {
             return idx;
@@ -550,7 +537,6 @@ impl SequenceDiagram {
         idx
     }
 
-    /// Adds a participant as the last member of the box.
     pub fn add_participant_to_box(&mut self, box_idx: usize, name: &str) {
         let Some(end) = self.boxes.get(box_idx).map(|b| b.end) else {
             return;
@@ -1140,6 +1126,7 @@ fn find_arrow(s: &str) -> Option<(usize, ArrowStyle)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     impl SequenceDiagram {
         fn add_message(&mut self, from: usize, to: usize, text: String) {
@@ -1189,6 +1176,45 @@ mod tests {
     end
 ";
 
+    const FRAME_SOURCE: &str = "sequenceDiagram
+    participant A
+    participant B
+    loop Every minute
+        A->>B: ping
+        Note over B: n
+    end
+    B->>A: pong
+    opt
+        A->>B: x
+    end
+";
+
+    const ALT_SOURCE: &str = "sequenceDiagram
+    participant A
+    participant B
+    A->>B: before
+    alt ok
+        A->>B: one
+        A->>B: two
+    else expired
+        B->>A: three
+    else
+        B->>A: four
+    end
+    A->>B: after
+";
+
+    fn parse_err(input: &str) -> String {
+        SequenceDiagram::from_mermaid(input)
+            .err()
+            .expect("expected parse error")
+            .to_string()
+    }
+
+    fn ids(d: &SequenceDiagram) -> Vec<&str> {
+        d.participants.iter().map(|p| p.id.as_str()).collect()
+    }
+
     fn resolved(d: &SequenceDiagram) -> Vec<(String, String)> {
         let name = |i: usize| d.participants[i].id.clone();
         d.events
@@ -1214,6 +1240,681 @@ mod tests {
         assert!(sorted);
         let reparsed = SequenceDiagram::from_mermaid(&after.to_mermaid()).unwrap();
         assert!(&reparsed == after);
+    }
+
+    fn first_style(d: &SequenceDiagram) -> ArrowStyle {
+        match &d.events[0] {
+            Event::Message { style, .. } => *style,
+            Event::Note { .. } => panic!("Expected Message event"),
+        }
+    }
+
+    fn framed() -> SequenceDiagram {
+        SequenceDiagram::from_mermaid(FRAME_SOURCE).unwrap()
+    }
+
+    fn msg(d: &mut SequenceDiagram, text: &str) {
+        d.add_message(0, 1, text.to_string());
+    }
+
+    fn frame_ranges(d: &SequenceDiagram) -> Vec<(usize, usize)> {
+        d.fragments.iter().map(|f| (f.start, f.end)).collect()
+    }
+
+    fn numbered(n: usize) -> SequenceDiagram {
+        let mut d = SequenceDiagram::new();
+        d.add_participant("A");
+        d.add_participant("B");
+        for i in 0..n {
+            msg(&mut d, &i.to_string());
+        }
+        d
+    }
+
+    fn texts(d: &SequenceDiagram) -> String {
+        d.events.iter().map(Event::text).collect()
+    }
+
+    fn assert_reimports_equal(d: &SequenceDiagram) {
+        let again = SequenceDiagram::from_mermaid(&d.to_mermaid()).unwrap();
+        assert!(again == *d);
+    }
+
+    fn assert_sections_valid(d: &SequenceDiagram) {
+        for f in &d.fragments {
+            let mut previous = f.start;
+            for (at, _) in &f.sections {
+                assert!(*at > previous && *at <= f.end, "{:?}", f.sections);
+                previous = *at;
+            }
+        }
+    }
+
+    fn sectioned(n: usize, start: usize, end: usize, at: &[usize]) -> SequenceDiagram {
+        let mut d = numbered(n);
+        assert!(d.add_fragment(FragmentKind::Alt, "f".into(), start, end));
+        for &a in at {
+            assert!(d.add_section(0, a, format!("s{a}")).is_some());
+        }
+        d
+    }
+
+    fn divider_starts(d: &SequenceDiagram) -> Vec<usize> {
+        d.fragments[0].sections.iter().map(|(at, _)| *at).collect()
+    }
+
+    fn message_to(d: &SequenceDiagram, text: &str) -> Event {
+        Event::Message {
+            from: 0,
+            to: 1,
+            text: text.into(),
+            style: d
+                .events
+                .iter()
+                .find_map(|e| match e {
+                    Event::Message { style, .. } => Some(*style),
+                    Event::Note { .. } => None,
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    fn simulate_app_edits(d: &mut SequenceDiagram) {
+        for i in 0..d.participants.len() {
+            let mut style = ArrowStyle::default();
+            for _ in 0..8 {
+                d.events.push(Event::Message {
+                    from: i,
+                    to: 0,
+                    text: "m".to_string(),
+                    style,
+                });
+                style = style.next();
+            }
+            d.events.push(Event::Note {
+                position: NotePosition::Over,
+                participant_start: i,
+                participant_end: 0,
+                text: "n".to_string(),
+            });
+        }
+    }
+
+    // parsing and exporting
+
+    #[rstest]
+    #[case::failure_missing_header_line(
+        "Alice->>Bob: Hello",
+        "line 1: first line must be 'sequenceDiagram'"
+    )]
+    #[case::failure_comment_only_input("%% only a comment\n", "missing 'sequenceDiagram' header")]
+    #[case::failure_rect_block(
+        "sequenceDiagram\nrect x",
+        "line 2: 'rect' blocks are not supported yet"
+    )]
+    #[case::failure_create("sequenceDiagram\ncreate A", "line 2: 'create' is not supported yet")]
+    #[case::failure_destroy("sequenceDiagram\ndestroy A", "line 2: 'destroy' is not supported yet")]
+    #[case::failure_activate(
+        "sequenceDiagram\nA->>B: x\nactivate B",
+        "line 3: 'activate' is not supported yet"
+    )]
+    #[case::failure_deactivate(
+        "sequenceDiagram\ndeactivate B",
+        "line 2: 'deactivate' is not supported yet"
+    )]
+    #[case::failure_activation_shorthand(
+        "sequenceDiagram\nA->>+B: x",
+        "line 2: activation shorthand ('+'/'-') is not supported yet"
+    )]
+    #[case::failure_bidirectional_arrow(
+        "sequenceDiagram\nA<<->>B: x",
+        "line 2: bidirectional arrows ('<<->>') are not supported yet"
+    )]
+    #[case::failure_bidirectional_dashed_arrow(
+        "sequenceDiagram\nA<<-->>B: x",
+        "line 2: bidirectional arrows ('<<->>') are not supported yet"
+    )]
+    #[case::failure_box_without_participants(
+        "sequenceDiagram\nparticipant A\nbox\nend",
+        "line 4: box has no participants"
+    )]
+    #[case::failure_nested_boxes(
+        "sequenceDiagram\nbox\nparticipant A\nbox\nend",
+        "line 4: nested boxes are not supported"
+    )]
+    #[case::failure_autonumber_with_options(
+        "sequenceDiagram\nautonumber 10",
+        "line 2: 'autonumber' options are not supported yet"
+    )]
+    #[case::failure_autonumber_after_message(
+        "sequenceDiagram\nA->>B: x\nautonumber",
+        "line 3: 'autonumber' must come before the first message or note"
+    )]
+    #[case::failure_autonumber_in_box(
+        "sequenceDiagram\nbox\nparticipant A\nautonumber",
+        "line 4: 'autonumber' is not supported inside a box or frame"
+    )]
+    #[case::failure_autonumber_in_frame(
+        "sequenceDiagram\nloop\nautonumber",
+        "line 3: 'autonumber' is not supported inside a box or frame"
+    )]
+    // a block that is never closed is reported at its opening line
+    #[case::failure_unclosed_loop(
+        "sequenceDiagram\nparticipant A\nloop x\nA->>A: y",
+        "line 3: 'loop' is never closed"
+    )]
+    #[case::failure_unclosed_box(
+        "sequenceDiagram\nbox ->> A: x\nparticipant A\n",
+        "line 2: 'box' is never closed"
+    )]
+    #[case::failure_nested_frames(
+        "sequenceDiagram\nloop a\nopt b\nA->>B: x\nend\nend",
+        "line 3: nested frames are not supported yet"
+    )]
+    #[case::failure_empty_loop("sequenceDiagram\nloop a\nend", "line 3: 'loop' block is empty")]
+    #[case::failure_box_inside_frame(
+        "sequenceDiagram\nloop a\nbox\nend",
+        "line 3: 'box' inside a frame is not supported"
+    )]
+    #[case::failure_frame_inside_box(
+        "sequenceDiagram\nbox\nloop a",
+        "line 3: frames inside a box are not supported"
+    )]
+    #[case::failure_unexpected_end(
+        "sequenceDiagram\nloop a\nA->>B: x\nend\nend",
+        "line 5: unexpected 'end'"
+    )]
+    #[case::failure_else_outside_alt(
+        "sequenceDiagram\nA->>B: x\nelse y",
+        "line 3: 'else' is only allowed inside 'alt'"
+    )]
+    #[case::failure_else_in_par(
+        "sequenceDiagram\npar\nA->>B: x\nelse y\nA->>B: z\nend",
+        "line 4: 'else' is only allowed inside 'alt'"
+    )]
+    #[case::failure_and_in_alt(
+        "sequenceDiagram\nalt\nA->>B: x\nand y\nA->>B: z\nend",
+        "line 4: 'and' is only allowed inside 'par'"
+    )]
+    #[case::failure_option_in_par(
+        "sequenceDiagram\npar\nA->>B: x\noption y\nA->>B: z\nend",
+        "line 4: 'option' is only allowed inside 'critical'"
+    )]
+    #[case::failure_empty_section_between_elses(
+        "sequenceDiagram\nalt a\nA->>B: x\nelse y\nelse z\nA->>B: x\nend",
+        "line 5: empty section before 'else'"
+    )]
+    #[case::failure_empty_first_section_before_else(
+        "sequenceDiagram\nalt a\nelse y\nA->>B: x\nend",
+        "line 3: empty section before 'else'"
+    )]
+    #[case::failure_empty_last_section_before_end(
+        "sequenceDiagram\nalt a\nA->>B: x\nelse y\nend",
+        "line 5: empty section before 'end'"
+    )]
+    fn test_parse_error_message(#[case] given_input: &str, #[case] expected_error: &str) {
+        assert_eq!(parse_err(given_input), expected_error);
+    }
+
+    #[rstest]
+    #[case::failure_participant_id_with_cross_arrow("participant re-xport", "line 2:")]
+    #[case::failure_participant_id_with_comma("participant a,b", "line 2:")]
+    #[case::failure_actor_without_id("actor ->> B: hi", "line 2:")]
+    #[case::failure_participant_with_empty_alias(
+        "participant A as ",
+        "line 2: invalid participant declaration"
+    )]
+    #[case::failure_actor_with_empty_id(
+        "actor  as Alice",
+        "line 2: invalid participant declaration"
+    )]
+    #[case::failure_sender_id_with_cross_arrow("data-xfer->>B: x", "line 2:")]
+    #[case::failure_receiver_list("A->>b,c: x", "line 2:")]
+    #[case::failure_receiver_with_cross_arrow("A->>B-xC: x", "line 2:")]
+    #[case::failure_note_with_alias("Note over A as B: n", "line 2:")]
+    #[case::failure_receiver_with_alias("A->>B as C: x", "line 2:")]
+    #[case::failure_note_with_comment_marker("Note over %%x: n", "line 2:")]
+    #[case::failure_note_with_trailing_dash("Note over a-: n", "line 2:")]
+    #[case::failure_note_with_participant_keyword("Note over participant x: n", "line 2:")]
+    fn test_unreadable_ids_are_rejected_with_line_number(
+        #[case] given_body: &str,
+        #[case] expected_prefix: &str,
+    ) {
+        let err = parse_err(&format!("sequenceDiagram\n{given_body}"));
+
+        assert!(err.starts_with(expected_prefix), "{given_body}: {err}");
+    }
+
+    #[rstest]
+    #[case::failure_participant_declared_before_box(
+        "sequenceDiagram\nparticipant A\nbox\nparticipant A\nend"
+    )]
+    #[case::failure_participant_used_before_box(
+        "sequenceDiagram\nA->>B: x\nbox\nparticipant B\nend"
+    )]
+    fn test_box_declaration_of_known_id_rejected(#[case] given_input: &str) {
+        let err = parse_err(given_input);
+
+        assert!(
+            err.contains("box participants must be declared before use"),
+            "{err}"
+        );
+    }
+
+    #[rstest]
+    #[case::success_box_with_aliases_and_note(
+        "sequenceDiagram\nparticipant A as Alice\nbox Blue Team\nactor U as User\nparticipant B\nend\nU->>A: Hi\nNote over A,B: Hey\n",
+        "sequenceDiagram\n    participant A as Alice\n    box Blue Team\n        actor U as User\n        participant B\n    end\n    U->>A: Hi\n    Note over A,B: Hey\n"
+    )]
+    #[case::success_implicit_participants(
+        "sequenceDiagram\nA->>B: x",
+        "sequenceDiagram\n    participant A\n    participant B\n    A->>B: x\n"
+    )]
+    #[case::success_comments_and_blank_lines_dropped(
+        "%% intro\n\nsequenceDiagram\n\n%% note\n  participant Alice\nAlice->>Bob: Hi\n",
+        "sequenceDiagram\n    participant Alice\n    participant Bob\n    Alice->>Bob: Hi\n"
+    )]
+    #[case::success_duplicate_autonumber_collapsed(
+        "sequenceDiagram\nautonumber\nautonumber\nA->>B: hi",
+        "sequenceDiagram\n    autonumber\n    participant A\n    participant B\n    A->>B: hi\n"
+    )]
+    fn test_normalizes_to(#[case] given_input: &str, #[case] expected_mermaid: &str) {
+        let d = SequenceDiagram::from_mermaid(given_input).unwrap();
+
+        assert_eq!(d.to_mermaid(), expected_mermaid);
+    }
+
+    #[rstest]
+    #[case::success_frame(FRAME_SOURCE)]
+    #[case::success_alt_frame(ALT_SOURCE)]
+    #[case::success_box_and_loop(
+        "sequenceDiagram\n    box Blue Team\n        participant A\n        participant B\n    end\n    loop L\n        A->>B: x\n    end\n"
+    )]
+    #[case::success_notes(
+        "sequenceDiagram\n    participant A\n    participant B\n    Note right of A: r\n    Note left of B: l\n    Note over A,B: o\n"
+    )]
+    #[case::success_line_breaks(
+        "sequenceDiagram\n    autonumber\n    participant A\n    participant B\n    A->>B: first line<br/>second line\n    B->>B: self<BR>loop\n    Note right of B: a<br />b<br/>c\n    loop retry\n        Note over A,B: framed<br>note\n    end\n"
+    )]
+    #[case::success_autonumber_box_and_frame(
+        "sequenceDiagram\n    autonumber\n    box Blue Team\n        participant A\n    end\n    participant B\n    A->>B: hi\n    loop Retry\n        Note over A: n\n        B->>A: ok\n    end\n"
+    )]
+    // arrow tokens in labels must not be mistaken for message arrows
+    #[case::success_arrow_in_else_label(
+        "sequenceDiagram\n    participant A\n    participant B\n    alt a\n        A->>B: x\n    else a->>b\n        A->>B: y\n    end\n"
+    )]
+    #[case::success_arrow_in_loop_label_and_note(
+        "sequenceDiagram\n    participant A\n    participant B\n    loop a->>b\n        A->>B: x\n        Note over A: see -x here\n    end\n"
+    )]
+    #[case::success_cross_arrow_in_box_label(
+        "sequenceDiagram\n    box Blue a-xb\n        participant A\n    end\n"
+    )]
+    #[case::success_paren_in_box_label(
+        "sequenceDiagram\n    box re-x)port\n        participant A\n    end\n"
+    )]
+    #[case::success_arrow_in_box_label(
+        "sequenceDiagram\n    box a->>b\n        participant A\n    end\n"
+    )]
+    #[case::success_leading_arrow_in_box_label(
+        "sequenceDiagram\n    box ->> A: x\n        participant A\n    end\n"
+    )]
+    fn test_exact_roundtrip(#[case] given_source: &str) {
+        let d = SequenceDiagram::from_mermaid(given_source).unwrap();
+
+        assert_eq!(d.to_mermaid(), given_source);
+    }
+
+    #[rstest]
+    #[case::success_solid_arrow("->>", ArrowStyle::SolidArrow)]
+    #[case::success_dashed_arrow("-->>", ArrowStyle::DashedArrow)]
+    #[case::success_solid_line("->", ArrowStyle::Solid)]
+    #[case::success_dashed_line("-->", ArrowStyle::Dashed)]
+    #[case::success_solid_cross("-x", ArrowStyle::SolidCross)]
+    #[case::success_dashed_cross("--x", ArrowStyle::DashedCross)]
+    #[case::success_solid_async("-)", ArrowStyle::SolidAsync)]
+    #[case::success_dashed_async("--)", ArrowStyle::DashedAsync)]
+    fn test_arrow_style_parse_and_export(
+        #[case] given_token: &str,
+        #[case] expected_style: ArrowStyle,
+    ) {
+        let input = format!(
+            "sequenceDiagram\n    participant A\n    participant B\n    A{given_token}B: Hi\n"
+        );
+        let d = SequenceDiagram::from_mermaid(&input).unwrap();
+
+        assert!(matches!(d.events[0], Event::Message { from: 0, to: 1, .. }));
+        assert_eq!(first_style(&d), expected_style);
+        assert_eq!(d.to_mermaid(), input);
+    }
+
+    #[rstest]
+    #[case::success_solid_arrow_with_arrow_text("A->>B: a -> b", ArrowStyle::SolidArrow)]
+    #[case::success_dashed_arrow_with_arrow_text("A-->>B: a -> b", ArrowStyle::DashedArrow)]
+    fn test_arrow_text_in_message_body(
+        #[case] given_line: &str,
+        #[case] expected_style: ArrowStyle,
+    ) {
+        let d = SequenceDiagram::from_mermaid(&format!("sequenceDiagram\n{given_line}")).unwrap();
+
+        assert_eq!(d.events[0].text(), "a -> b");
+        assert_eq!(first_style(&d), expected_style);
+    }
+
+    #[rstest]
+    #[case::success_implicit_ids("Alice->>Bob: Hello", &["Alice", "Bob"])]
+    #[case::success_id_with_dash("my-svc->>B: x", &["my-svc", "B"])]
+    #[case::success_id_with_keyword_prefix("loop->>Bob: x", &["loop", "Bob"])]
+    #[case::success_declared_ids_with_spaces("participant Actor\nparticipant Alice Smith", &["Actor", "Alice Smith"])]
+    fn test_parsed_participant_ids(#[case] given_body: &str, #[case] expected_ids: &[&str]) {
+        let d = SequenceDiagram::from_mermaid(&format!("sequenceDiagram\n{given_body}")).unwrap();
+
+        assert_eq!(ids(&d), expected_ids);
+    }
+
+    #[test]
+    fn test_parse_alias_and_actor() {
+        let d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nparticipant A as Alice\nactor U as User\nactor Bob\nparticipant Carol\nU->>A: Hi",
+        )
+        .unwrap();
+
+        assert_eq!(ids(&d), vec!["A", "U", "Bob", "Carol"]);
+        assert_eq!(d.participants[0].label.as_deref(), Some("Alice"));
+        assert!(!d.participants[0].actor);
+        assert_eq!(d.participants[1].label.as_deref(), Some("User"));
+        assert!(d.participants[1].actor);
+        assert!(d.participants[2].actor);
+        assert_eq!(d.participants[2].label, None);
+        assert!(matches!(d.events[0], Event::Message { from: 1, to: 0, .. }));
+    }
+
+    #[test]
+    fn test_declaration_after_use_updates_entry() {
+        let d =
+            SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: x\nactor A as Alice").unwrap();
+
+        assert_eq!(ids(&d), vec!["A", "B"]);
+        assert!(d.participants[0].actor);
+        assert_eq!(d.participants[0].label.as_deref(), Some("Alice"));
+    }
+
+    #[rstest]
+    #[case::success_note_right_of_participant(
+        "Note right of A: hi",
+        NotePosition::Right,
+        0,
+        0,
+        "hi"
+    )]
+    #[case::success_note_left_of_participant("Note left of B: hi", NotePosition::Left, 1, 1, "hi")]
+    #[case::success_note_over_participant_span(
+        "Note over A,B: Spanning note",
+        NotePosition::Over,
+        0,
+        1,
+        "Spanning note"
+    )]
+    fn test_parse_note(
+        #[case] given_line: &str,
+        #[case] expected_position: NotePosition,
+        #[case] expected_start: usize,
+        #[case] expected_end: usize,
+        #[case] expected_text: &str,
+    ) {
+        let source = format!("sequenceDiagram\nparticipant A\nparticipant B\n{given_line}");
+        let d = SequenceDiagram::from_mermaid(&source).unwrap();
+
+        let expected = Event::Note {
+            position: expected_position,
+            participant_start: expected_start,
+            participant_end: expected_end,
+            text: expected_text.to_string(),
+        };
+        assert!(d.events == [expected]);
+    }
+
+    #[test]
+    fn test_valid_inputs_reimport_equal() {
+        let inputs = [
+            "sequenceDiagram\nparticipant A as Alice\nactor U as User\nU->>A: Hi",
+            "sequenceDiagram\nparticipant Alice Smith\nparticipant my-svc\nAlice Smith->>my-svc: x",
+            "sequenceDiagram\nbox Green Team\nactor A\nparticipant my-svc as Svc\nend\nA->>my-svc: x\nNote over A,my-svc: n\nNote left of A: l",
+            "sequenceDiagram\nA->>B: x\nloop Every minute\nB->>A: y\nNote over A: n\nend\nopt\nA->>B: z\nend",
+            "sequenceDiagram\nA->>B: 1\nA-->>B: 2\nA->B: 3\nA-->B: 4\nA-xB: 5\nA--xB: 6\nA-)B: 7\nA--)B: 8",
+        ];
+        for input in inputs {
+            let mut first = SequenceDiagram::from_mermaid(input).unwrap();
+            simulate_app_edits(&mut first);
+            let second = SequenceDiagram::from_mermaid(&first.to_mermaid()).unwrap();
+            assert!(first == second, "{input}");
+        }
+    }
+
+    // arrow styles
+
+    #[test]
+    fn test_arrow_style_cycle() {
+        let mut d = numbered(1);
+
+        let start = first_style(&d);
+        for _ in 0..8 {
+            d.next_arrow_style(0);
+        }
+        assert_eq!(first_style(&d), start);
+
+        d.next_arrow_style(0);
+        d.prev_arrow_style(0);
+        assert_eq!(first_style(&d), start);
+    }
+
+    #[test]
+    fn test_arrow_style_ignores_non_messages() {
+        let mut d = SequenceDiagram::new();
+        d.add_participant("A");
+        d.add_note(NotePosition::Over, 0, 0, "n".to_string());
+        assert!(d.next_arrow_style(0).is_none());
+        assert!(d.prev_arrow_style(5).is_none());
+    }
+
+    #[test]
+    fn test_reverse_keeps_arrow_style() {
+        let mut d = SequenceDiagram::from_mermaid("sequenceDiagram\nA-->>B: Hi").unwrap();
+        d.point_event_left(0);
+        assert_eq!(first_style(&d), ArrowStyle::DashedArrow);
+    }
+
+    // participants
+
+    #[rstest]
+    #[case::success_end("end")]
+    #[case::success_box("Box")]
+    #[case::success_else("else")]
+    #[case::success_and("and")]
+    #[case::success_option("option")]
+    #[case::success_activate("activate")]
+    #[case::success_autonumber("autonumber")]
+    fn test_reserved_word_ids_get_suffix_and_label(#[case] given_name: &str) {
+        let mut d = SequenceDiagram::new();
+        d.add_participant(given_name);
+
+        assert_eq!(d.participants[0].id, format!("{given_name}2"));
+        assert_eq!(d.participants[0].label.as_deref(), Some(given_name));
+        assert!(SequenceDiagram::from_mermaid(&d.to_mermaid()).is_ok());
+    }
+
+    #[test]
+    fn test_add_participant_generates_ids() {
+        let mut d = SequenceDiagram::new();
+        d.add_participant("Alice Smith");
+        d.add_participant("Bob");
+        d.add_participant("Bob");
+        d.add_participant(":::");
+
+        assert_eq!(ids(&d), vec!["AliceSmith", "Bob", "Bob2", "P"]);
+        assert_eq!(d.participants[0].label.as_deref(), Some("Alice Smith"));
+        assert_eq!(d.participants[1].label, None);
+        assert_eq!(d.participants[2].label.as_deref(), Some("Bob"));
+
+        let parsed = SequenceDiagram::from_mermaid(&d.to_mermaid()).unwrap();
+        assert_eq!(parsed.participants, d.participants);
+    }
+
+    #[test]
+    fn test_rename_participant_rules() {
+        let mut d = SequenceDiagram::new();
+        d.add_participant("Alice");
+        d.add_participant("Bob");
+
+        d.rename_participant(0, "Carol");
+        assert_eq!(d.participants[0], Participant::new("Carol"));
+
+        d.rename_participant(0, "Bob");
+        assert_eq!(d.participants[0].id, "Carol");
+        assert_eq!(d.participants[0].label.as_deref(), Some("Bob"));
+
+        d.rename_participant(0, "Carol");
+        assert_eq!(d.participants[0], Participant::new("Carol"));
+
+        d.rename_participant(1, "Big Bob");
+        assert_eq!(d.participants[1].id, "Bob");
+        assert_eq!(d.participants[1].label.as_deref(), Some("Big Bob"));
+
+        d.rename_participant(1, "loop");
+        assert_eq!(d.participants[1].id, "Bob");
+        assert_eq!(d.participants[1].label.as_deref(), Some("loop"));
+    }
+
+    #[test]
+    fn test_toggle_actor() {
+        let mut d = SequenceDiagram::new();
+        d.add_participant("Alice");
+
+        assert_eq!(d.toggle_actor(0), Some(true));
+        assert!(d.to_mermaid().contains("actor Alice"));
+        assert_eq!(d.toggle_actor(0), Some(false));
+        assert_eq!(d.toggle_actor(5), None);
+    }
+
+    #[test]
+    fn test_swap_and_remove_keep_label_and_actor() {
+        let mut d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nactor A as Alice\nparticipant B\nparticipant C as Carol",
+        )
+        .unwrap();
+
+        d.swap_participants(0, 1);
+        assert_eq!(ids(&d), vec!["B", "A", "C"]);
+        assert!(d.participants[1].actor);
+        assert_eq!(d.participants[1].label.as_deref(), Some("Alice"));
+
+        d.remove_participant(0);
+        assert_eq!(ids(&d), vec!["A", "C"]);
+        assert!(d.participants[0].actor);
+        assert_eq!(d.participants[1].label.as_deref(), Some("Carol"));
+    }
+
+    #[test]
+    fn test_remove_participant_updates_frames() {
+        let mut d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nA->>B: 1\nloop\nA->>C: 2\nB->>A: 3\nend\nB->>C: 4",
+        )
+        .unwrap();
+        assert_eq!(frame_ranges(&d), vec![(1, 2)]);
+
+        d.remove_participant(2);
+        assert_eq!(frame_ranges(&d), vec![(1, 1)]);
+
+        d.remove_participant(0);
+        assert_eq!(d.fragments.len(), 0);
+        assert_eq!(d.event_count(), 0);
+    }
+
+    #[test]
+    fn test_remove_participant_with_sections() {
+        let mut d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nalt a\nA->>B: 1\nelse b\nA->>C: 2\nelse c\nB->>A: 3\nend",
+        )
+        .unwrap();
+
+        d.remove_participant(2);
+        assert_eq!(divider_starts(&d), [1]);
+        assert_eq!(d.fragments[0].sections[0].1, "c");
+        assert_sections_valid(&d);
+
+        d.remove_participant(1);
+        assert_eq!(d.fragments.len(), 0);
+    }
+
+    // boxes
+
+    #[test]
+    fn test_box_roundtrip() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice");
+        diagram.add_participant("Bob");
+        diagram.add_participant("Carol");
+        diagram.add_box("Frontend".to_string(), BoxColor::Blue, 0, 1);
+        diagram.add_message(0, 1, "Hello".to_string());
+
+        let mermaid = diagram.to_mermaid();
+        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
+
+        assert_eq!(parsed.participants, diagram.participants);
+        assert_eq!(parsed.boxes, diagram.boxes);
+    }
+
+    #[rstest]
+    #[case::success_plain_label("Foo", None, "Foo")]
+    #[case::success_empty_header("", None, "")]
+    #[case::success_rgb_header_stays_label("rgb(10, 20, 30) Foo", None, "rgb(10, 20, 30) Foo")]
+    #[case::success_named_color("Red", Some(BoxColor::Red), "")]
+    fn test_box_header_color_and_label(
+        #[case] given_header: &str,
+        #[case] expected_color: Option<BoxColor>,
+        #[case] expected_label: &str,
+    ) {
+        let source =
+            format!("sequenceDiagram\n    box {given_header}\n        participant A\n    end\n");
+        let d = SequenceDiagram::from_mermaid(&source).unwrap();
+
+        assert_eq!(d.boxes[0].color, expected_color);
+        assert_eq!(d.boxes[0].label, expected_label);
+
+        let line = format!("    box {given_header}");
+        let exported = d.to_mermaid();
+        assert!(exported.contains(&format!("{}\n", line.trim_end())));
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_box_remove_participant() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice");
+        diagram.add_participant("Bob");
+        diagram.add_participant("Carol");
+        diagram.add_box("Group".to_string(), BoxColor::Green, 0, 2);
+
+        diagram.remove_participant(0);
+        assert_eq!(box_ranges(&diagram), vec![("Group", 0, 1)]);
+
+        diagram.remove_participant(1);
+        assert_eq!(box_ranges(&diagram), vec![("Group", 0, 0)]);
+
+        diagram.remove_participant(0);
+        assert!(diagram.boxes.is_empty(), "empty box should be dropped");
+    }
+
+    #[test]
+    fn test_box_index_of() {
+        let mut diagram = SequenceDiagram::new();
+        diagram.add_participant("Alice");
+        diagram.add_participant("Bob");
+        diagram.add_participant("Carol");
+        diagram.add_box("FE".to_string(), BoxColor::Blue, 0, 1);
+
+        assert_eq!(diagram.box_index_of(0), Some(0));
+        assert_eq!(diagram.box_index_of(1), Some(0));
+        assert_eq!(diagram.box_index_of(2), None);
     }
 
     #[test]
@@ -1272,765 +1973,10 @@ mod tests {
         assert_eq!(ids(&d), vec!["A", "B", "Z", "C", "D", "E"]);
         assert_eq!(box_ranges(&d), vec![("One", 0, 2), ("Two", 4, 4)]);
         assert_eq!(resolved(&d), resolved(&original));
-        let reparsed = SequenceDiagram::from_mermaid(&d.to_mermaid()).unwrap();
-        assert!(reparsed == d);
+        assert_reimports_equal(&d);
     }
 
-    fn ids(d: &SequenceDiagram) -> Vec<&str> {
-        d.participants.iter().map(|p| p.id.as_str()).collect()
-    }
-
-    #[test]
-    fn test_box_roundtrip() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_participant("Bob");
-        diagram.add_participant("Carol");
-        diagram.add_box("Frontend".to_string(), BoxColor::Blue, 0, 1);
-        diagram.add_message(0, 1, "Hello".to_string());
-
-        let mermaid = diagram.to_mermaid();
-        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
-
-        assert_eq!(parsed.participants, diagram.participants);
-        assert_eq!(parsed.boxes.len(), 1);
-        assert_eq!(parsed.boxes[0].label, "Frontend");
-        assert_eq!(parsed.boxes[0].color, Some(BoxColor::Blue));
-        assert_eq!(parsed.boxes[0].start, 0);
-        assert_eq!(parsed.boxes[0].end, 1);
-    }
-
-    #[test]
-    fn test_box_remove_participant() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_participant("Bob");
-        diagram.add_participant("Carol");
-        diagram.add_box("Group".to_string(), BoxColor::Green, 0, 2);
-
-        diagram.remove_participant(0); // remove Alice
-        assert_eq!(diagram.boxes.len(), 1);
-        assert_eq!(diagram.boxes[0].start, 0);
-        assert_eq!(diagram.boxes[0].end, 1);
-
-        diagram.remove_participant(1); // remove Carol (now at index 1)
-        assert_eq!(diagram.boxes.len(), 1);
-        assert_eq!(diagram.boxes[0].start, 0);
-        assert_eq!(diagram.boxes[0].end, 0);
-    }
-
-    #[test]
-    fn test_box_no_label() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_participant("Bob");
-        diagram.add_box(String::new(), BoxColor::Red, 0, 1);
-
-        let mermaid = diagram.to_mermaid();
-        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
-
-        assert_eq!(parsed.boxes.len(), 1);
-        assert_eq!(parsed.boxes[0].color, Some(BoxColor::Red));
-        assert_eq!(parsed.boxes[0].label, "");
-    }
-
-    fn box_source(header: &str) -> String {
-        format!("sequenceDiagram\n    box {header}\n        participant A\n    end\n")
-    }
-
-    #[test]
-    fn test_box_without_color_keeps_label_and_exports_it() {
-        let diagram = SequenceDiagram::from_mermaid(&box_source("Foo")).unwrap();
-
-        assert_eq!(diagram.boxes[0].color, None);
-        assert_eq!(diagram.boxes[0].label, "Foo");
-        assert!(diagram.to_mermaid().contains("    box Foo\n"));
-    }
-
-    #[test]
-    fn test_bare_box_roundtrips() {
-        let diagram = SequenceDiagram::from_mermaid(&box_source("")).unwrap();
-
-        assert_eq!(diagram.boxes[0].color, None);
-        assert_eq!(diagram.boxes[0].label, "");
-
-        let mermaid = diagram.to_mermaid();
-        assert!(mermaid.contains("    box\n"));
-        let reparsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
-        assert_eq!(reparsed.to_mermaid(), mermaid);
-    }
-
-    #[test]
-    fn test_box_rgb_color_is_kept_in_label() {
-        let diagram = SequenceDiagram::from_mermaid(&box_source("rgb(10, 20, 30) Foo")).unwrap();
-
-        assert_eq!(diagram.boxes[0].color, None);
-        assert_eq!(diagram.boxes[0].label, "rgb(10, 20, 30) Foo");
-        assert!(
-            diagram
-                .to_mermaid()
-                .contains("    box rgb(10, 20, 30) Foo\n")
-        );
-    }
-
-    #[test]
-    fn test_box_color_only_has_empty_label() {
-        let diagram = SequenceDiagram::from_mermaid(&box_source("Red")).unwrap();
-
-        assert_eq!(diagram.boxes[0].color, Some(BoxColor::Red));
-        assert_eq!(diagram.boxes[0].label, "");
-    }
-
-    #[test]
-    fn test_box_remove_single_participant() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_box("Solo".to_string(), BoxColor::Purple, 0, 0);
-        assert_eq!(diagram.boxes.len(), 1);
-
-        diagram.remove_participant(0);
-        assert_eq!(
-            diagram.boxes.len(),
-            0,
-            "single-participant box should be dropped"
-        );
-    }
-
-    #[test]
-    fn test_box_index_of() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_participant("Bob");
-        diagram.add_participant("Carol");
-        diagram.add_box("FE".to_string(), BoxColor::Blue, 0, 1);
-
-        assert_eq!(diagram.box_index_of(0), Some(0));
-        assert_eq!(diagram.box_index_of(1), Some(0));
-        assert_eq!(diagram.box_index_of(2), None);
-    }
-
-    #[test]
-    fn test_roundtrip() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_participant("Bob");
-        diagram.add_message(0, 1, "Hello".to_string());
-        diagram.add_message(1, 0, "Hi there".to_string());
-
-        let mermaid = diagram.to_mermaid();
-        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
-
-        assert_eq!(parsed.participants, diagram.participants);
-        assert_eq!(parsed.events.len(), diagram.events.len());
-    }
-
-    fn parse_err(input: &str) -> String {
-        SequenceDiagram::from_mermaid(input)
-            .err()
-            .expect("expected parse error")
-            .to_string()
-    }
-
-    #[test]
-    fn test_skips_blank_and_comment_lines() {
-        let clean = "sequenceDiagram\nparticipant Alice\nAlice->>Bob: Hi";
-        let noisy =
-            "%% intro\n\nsequenceDiagram\n\n%% note\n  participant Alice\nAlice->>Bob: Hi\n";
-        let a = SequenceDiagram::from_mermaid(clean).unwrap();
-        let b = SequenceDiagram::from_mermaid(noisy).unwrap();
-        assert_eq!(a.to_mermaid(), b.to_mermaid());
-    }
-
-    const ALL_STYLES: [(&str, ArrowStyle); 8] = [
-        ("->>", ArrowStyle::SolidArrow),
-        ("-->>", ArrowStyle::DashedArrow),
-        ("->", ArrowStyle::Solid),
-        ("-->", ArrowStyle::Dashed),
-        ("-x", ArrowStyle::SolidCross),
-        ("--x", ArrowStyle::DashedCross),
-        ("-)", ArrowStyle::SolidAsync),
-        ("--)", ArrowStyle::DashedAsync),
-    ];
-
-    fn first_style(d: &SequenceDiagram) -> ArrowStyle {
-        match &d.events[0] {
-            Event::Message { style, .. } => *style,
-            Event::Note { .. } => panic!("Expected Message event"),
-        }
-    }
-
-    #[test]
-    fn test_parse_all_arrow_styles() {
-        for (token, style) in ALL_STYLES {
-            let d =
-                SequenceDiagram::from_mermaid(&format!("sequenceDiagram\nA{token}B: Hi")).unwrap();
-            match &d.events[0] {
-                Event::Message {
-                    from,
-                    to,
-                    style: parsed,
-                    ..
-                } => {
-                    assert_eq!((*from, *to), (0, 1), "{token}");
-                    assert_eq!(*parsed, style, "{token}");
-                }
-                Event::Note { .. } => panic!("Expected Message event"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_export_all_arrow_styles() {
-        for (token, style) in ALL_STYLES {
-            let mut d = SequenceDiagram::new();
-            d.add_participant("A");
-            d.add_participant("B");
-            d.add_message(0, 1, "Hi".to_string());
-            if let Event::Message { style: s, .. } = &mut d.events[0] {
-                *s = style;
-            }
-            assert!(
-                d.to_mermaid().contains(&format!("A{token}B: Hi")),
-                "{token}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_roundtrip_all_arrow_styles() {
-        for (token, _) in ALL_STYLES {
-            let input =
-                format!("sequenceDiagram\n    participant A\n    participant B\n    A{token}B: Hi");
-            let d = SequenceDiagram::from_mermaid(&input).unwrap();
-            assert_eq!(d.to_mermaid().trim_end(), input, "{token}");
-        }
-    }
-
-    #[test]
-    fn test_arrow_style_cycle() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("A");
-        d.add_participant("B");
-        d.add_message(0, 1, "Hi".to_string());
-
-        let start = first_style(&d);
-        for _ in 0..8 {
-            d.next_arrow_style(0);
-        }
-        assert_eq!(first_style(&d), start);
-
-        d.next_arrow_style(0);
-        d.prev_arrow_style(0);
-        assert_eq!(first_style(&d), start);
-    }
-
-    #[test]
-    fn test_arrow_style_ignores_non_messages() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("A");
-        d.add_note(NotePosition::Over, 0, 0, "n".to_string());
-        assert!(d.next_arrow_style(0).is_none());
-        assert!(d.prev_arrow_style(5).is_none());
-    }
-
-    #[test]
-    fn test_reverse_keeps_arrow_style() {
-        let mut d = SequenceDiagram::from_mermaid("sequenceDiagram\nA-->>B: Hi").unwrap();
-        d.point_event_left(0);
-        assert_eq!(first_style(&d), ArrowStyle::DashedArrow);
-    }
-
-    #[test]
-    fn test_add_message_default_style() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("A");
-        d.add_participant("B");
-        d.add_message(0, 1, "Hi".to_string());
-        assert_eq!(first_style(&d), ArrowStyle::SolidArrow);
-    }
-
-    #[test]
-    fn test_parse_alias_and_actor() {
-        let d = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nparticipant A as Alice\nactor U as User\nactor Bob\nparticipant Carol\nU->>A: Hi",
-        )
-        .unwrap();
-
-        assert_eq!(ids(&d), vec!["A", "U", "Bob", "Carol"]);
-        assert_eq!(d.participants[0].label.as_deref(), Some("Alice"));
-        assert!(!d.participants[0].actor);
-        assert_eq!(d.participants[1].label.as_deref(), Some("User"));
-        assert!(d.participants[1].actor);
-        assert!(d.participants[2].actor);
-        assert_eq!(d.participants[2].label, None);
-        assert!(matches!(d.events[0], Event::Message { from: 1, to: 0, .. }));
-    }
-
-    #[test]
-    fn test_exact_roundtrip_with_alias_actor_and_box() {
-        let input = "sequenceDiagram\n    participant A as Alice\n    box Blue Team\n        actor U as User\n        participant B\n    end\n    U->>A: Hi\n    Note over A,B: Hey\n";
-        let d = SequenceDiagram::from_mermaid(input).unwrap();
-
-        assert_eq!(d.to_mermaid(), input);
-    }
-
-    #[test]
-    fn test_implicit_participant_export() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: x").unwrap();
-
-        assert_eq!(
-            d.to_mermaid(),
-            "sequenceDiagram\n    participant A\n    participant B\n    A->>B: x\n"
-        );
-    }
-
-    #[test]
-    fn test_declaration_after_use_updates_entry() {
-        let d =
-            SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: x\nactor A as Alice").unwrap();
-
-        assert_eq!(ids(&d), vec!["A", "B"]);
-        assert!(d.participants[0].actor);
-        assert_eq!(d.participants[0].label.as_deref(), Some("Alice"));
-    }
-
-    #[test]
-    fn test_unreadable_ids_rejected() {
-        for decl in [
-            "participant re-xport",
-            "participant a,b",
-            "participant a:b",
-            "actor ->> B: hi",
-            "participant ->> B: hi",
-        ] {
-            let err = parse_err(&format!("sequenceDiagram\n{decl}"));
-            assert!(err.starts_with("line 2:"), "{decl}: {err}");
-        }
-    }
-
-    #[test]
-    fn test_box_declaration_of_known_id_rejected() {
-        for input in [
-            "sequenceDiagram\nparticipant A\nbox\nparticipant A\nend",
-            "sequenceDiagram\nA->>B: x\nbox\nparticipant B\nend",
-        ] {
-            let err = parse_err(input);
-            assert!(
-                err.contains("box participants must be declared before use"),
-                "{err}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_empty_box_rejected() {
-        let err = parse_err("sequenceDiagram\nparticipant A\nbox\nend");
-        assert_eq!(err, "line 4: box has no participants");
-    }
-
-    #[test]
-    fn test_reserved_word_ids_get_label() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("end");
-        d.add_participant("Box");
-        d.rename_participant(0, "loop");
-
-        assert_eq!(ids(&d), vec!["end2", "Box2"]);
-        assert_eq!(d.participants[0].label.as_deref(), Some("loop"));
-        assert!(SequenceDiagram::from_mermaid(&d.to_mermaid()).is_ok());
-    }
-
-    #[test]
-    fn test_divider_words_are_reserved_ids() {
-        let mut d = SequenceDiagram::new();
-        for name in ["else", "and", "option"] {
-            d.add_participant(name);
-        }
-
-        assert_eq!(ids(&d), vec!["else2", "and2", "option2"]);
-        assert!(SequenceDiagram::from_mermaid(&d.to_mermaid()).is_ok());
-    }
-
-    #[test]
-    fn test_empty_alias_rejected() {
-        for decl in ["participant A as ", "actor  as Alice", "actor A as"] {
-            let err = parse_err(&format!("sequenceDiagram\n{decl}"));
-            assert!(
-                err.starts_with("line 2: invalid participant declaration"),
-                "{decl}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_add_participant_generates_ids() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("Alice Smith");
-        d.add_participant("Bob");
-        d.add_participant("Bob");
-        d.add_participant(":::");
-
-        assert_eq!(ids(&d), vec!["AliceSmith", "Bob", "Bob2", "P"]);
-        assert_eq!(d.participants[0].label.as_deref(), Some("Alice Smith"));
-        assert_eq!(d.participants[1].label, None);
-        assert_eq!(d.participants[2].label.as_deref(), Some("Bob"));
-
-        let parsed = SequenceDiagram::from_mermaid(&d.to_mermaid()).unwrap();
-        assert_eq!(parsed.participants, d.participants);
-    }
-
-    #[test]
-    fn test_rename_participant_rules() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("Alice");
-        d.add_participant("Bob");
-
-        d.rename_participant(0, "Carol");
-        assert_eq!(d.participants[0], Participant::new("Carol"));
-
-        d.rename_participant(0, "Bob");
-        assert_eq!(d.participants[0].id, "Carol");
-        assert_eq!(d.participants[0].label.as_deref(), Some("Bob"));
-
-        d.rename_participant(0, "Carol");
-        assert_eq!(d.participants[0], Participant::new("Carol"));
-
-        d.rename_participant(1, "Big Bob");
-        assert_eq!(d.participants[1].id, "Bob");
-        assert_eq!(d.participants[1].label.as_deref(), Some("Big Bob"));
-
-        d.rename_participant(1, "Other");
-        assert_eq!(d.participants[1].id, "Bob");
-        assert_eq!(d.participants[1].label.as_deref(), Some("Other"));
-    }
-
-    #[test]
-    fn test_toggle_actor() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("Alice");
-
-        assert_eq!(d.toggle_actor(0), Some(true));
-        assert!(d.to_mermaid().contains("actor Alice"));
-        assert_eq!(d.toggle_actor(0), Some(false));
-        assert_eq!(d.toggle_actor(5), None);
-    }
-
-    #[test]
-    fn test_swap_and_remove_keep_label_and_actor() {
-        let mut d = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nactor A as Alice\nparticipant B\nparticipant C as Carol",
-        )
-        .unwrap();
-
-        d.swap_participants(0, 1);
-        assert_eq!(ids(&d), vec!["B", "A", "C"]);
-        assert!(d.participants[1].actor);
-        assert_eq!(d.participants[1].label.as_deref(), Some("Alice"));
-
-        d.remove_participant(0);
-        assert_eq!(ids(&d), vec!["A", "C"]);
-        assert!(d.participants[0].actor);
-        assert_eq!(d.participants[1].label.as_deref(), Some("Carol"));
-    }
-
-    #[test]
-    fn test_unsupported_keywords_rejected() {
-        let err = parse_err("sequenceDiagram\nrect x");
-        assert_eq!(err, "line 2: 'rect' blocks are not supported yet");
-        for kw in ["create", "destroy", "activate", "deactivate"] {
-            let err = parse_err(&format!("sequenceDiagram\n{kw} A"));
-            assert_eq!(err, format!("line 2: '{kw}' is not supported yet"));
-        }
-        let err = parse_err("sequenceDiagram\nA->>B: x\nactivate B");
-        assert_eq!(err, "line 3: 'activate' is not supported yet");
-        let err = parse_err("sequenceDiagram\nA->>B: x\nrect Cond");
-        assert_eq!(err, "line 3: 'rect' blocks are not supported yet");
-    }
-
-    #[test]
-    fn test_activation_shorthand_rejected() {
-        for line in ["A->>+B: x", "A->>-B: x", "A-->>-B: x", "A->>++B: x"] {
-            let err = parse_err(&format!("sequenceDiagram\n{line}"));
-            assert_eq!(
-                err,
-                "line 2: activation shorthand ('+'/'-') is not supported yet"
-            );
-        }
-    }
-
-    #[test]
-    fn test_activate_is_still_reserved_id() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("activate");
-        assert_eq!(d.participants[0].id, "activate2");
-    }
-
-    #[test]
-    fn test_arrow_text_in_message_body() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: a -> b").unwrap();
-        match &d.events[0] {
-            Event::Message { text, .. } => assert_eq!(text, "a -> b"),
-            Event::Note { .. } => panic!("Expected Message event"),
-        }
-    }
-
-    #[test]
-    fn test_dashed_arrow_text_in_message_body() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nA-->>B: a -> b").unwrap();
-        match &d.events[0] {
-            Event::Message { text, style, .. } => {
-                assert_eq!(text, "a -> b");
-                assert_eq!(*style, ArrowStyle::DashedArrow);
-            }
-            Event::Note { .. } => panic!("Expected Message event"),
-        }
-    }
-
-    #[test]
-    fn test_bidirectional_arrow_rejected() {
-        for arrow in ["<<->>", "<<-->>"] {
-            let err = parse_err(&format!("sequenceDiagram\nA{arrow}B: x"));
-            assert_eq!(
-                err,
-                "line 2: bidirectional arrows ('<<->>') are not supported yet"
-            );
-        }
-    }
-
-    #[test]
-    fn test_participant_name_containing_arrow_prefix() {
-        let err = parse_err("sequenceDiagram\ndata-xfer->>B: x");
-        assert!(err.starts_with("line 2:"), "{err}");
-    }
-
-    #[test]
-    fn test_unreadable_message_ids_rejected() {
-        for msg in ["A->>b,c: x", "A->>B-xC: x", "a,b->>B: x"] {
-            let err = parse_err(&format!("sequenceDiagram\n{msg}"));
-            assert!(err.starts_with("line 2:"), "{msg}: {err}");
-        }
-    }
-
-    #[test]
-    fn test_hyphenated_id_in_message_parses() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nmy-svc->>B: x").unwrap();
-        assert_eq!(ids(&d), vec!["my-svc", "B"]);
-    }
-
-    fn simulate_app_edits(d: &mut SequenceDiagram) {
-        for i in 0..d.participants.len() {
-            let mut style = ArrowStyle::default();
-            for _ in 0..8 {
-                d.events.push(Event::Message {
-                    from: i,
-                    to: 0,
-                    text: "m".to_string(),
-                    style,
-                });
-                style = style.next();
-            }
-            d.events.push(Event::Note {
-                position: NotePosition::Over,
-                participant_start: i,
-                participant_end: 0,
-                text: "n".to_string(),
-            });
-        }
-    }
-
-    #[test]
-    fn test_unreadable_note_ids_rejected() {
-        for line in [
-            "Note over A as B: n",
-            "A->>B as C: x",
-            "Note over %%x: n",
-            "Note over a-: n",
-            "Note over participant x: n",
-            "Note over loop x: n",
-        ] {
-            let err = parse_err(&format!("sequenceDiagram\n{line}"));
-            assert!(err.starts_with("line 2:"), "{line}: {err}");
-        }
-    }
-
-    #[test]
-    fn test_spaced_and_keyword_like_ids_accepted() {
-        let d = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nparticipant Actor\nparticipant Alice Smith",
-        )
-        .unwrap();
-        assert_eq!(ids(&d), vec!["Actor", "Alice Smith"]);
-    }
-
-    #[test]
-    fn test_nested_box_rejected() {
-        let err = parse_err("sequenceDiagram\nbox\nparticipant A\nbox\nend");
-        assert_eq!(err, "line 4: nested boxes are not supported");
-    }
-
-    #[test]
-    fn test_valid_inputs_reimport_equal() {
-        let inputs = [
-            "sequenceDiagram\nparticipant A as Alice\nactor U as User\nU->>A: Hi",
-            "sequenceDiagram\nparticipant Alice Smith\nparticipant my-svc\nAlice Smith->>my-svc: x",
-            "sequenceDiagram\nbox Green Team\nactor A\nparticipant my-svc as Svc\nend\nA->>my-svc: x\nNote over A,my-svc: n\nNote left of A: l",
-            "sequenceDiagram\nA->>B: x\nloop Every minute\nB->>A: y\nNote over A: n\nend\nopt\nA->>B: z\nend",
-            "sequenceDiagram\nA->>B: 1\nA-->>B: 2\nA->B: 3\nA-->B: 4\nA-xB: 5\nA--xB: 6\nA-)B: 7\nA--)B: 8",
-        ];
-        for input in inputs {
-            let mut first = SequenceDiagram::from_mermaid(input).unwrap();
-            simulate_app_edits(&mut first);
-            let second = SequenceDiagram::from_mermaid(&first.to_mermaid()).unwrap();
-            assert!(first == second, "{input}");
-        }
-    }
-
-    #[test]
-    fn test_hyphenated_participant_name() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nmy-svc->>B: x").unwrap();
-        assert_eq!(ids(&d), vec!["my-svc", "B"]);
-    }
-
-    #[test]
-    fn test_keyword_prefixed_participant_name() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nloop->>Bob: x").unwrap();
-        assert_eq!(ids(&d), vec!["loop", "Bob"]);
-    }
-
-    #[test]
-    fn test_roundtrip_with_comments() {
-        let clean = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: Hi";
-        let noisy =
-            "sequenceDiagram\n%% c\nparticipant Alice\n\nparticipant Bob\n%% d\nAlice->>Bob: Hi";
-        let exported = SequenceDiagram::from_mermaid(noisy).unwrap().to_mermaid();
-        let expected = SequenceDiagram::from_mermaid(clean).unwrap().to_mermaid();
-        assert_eq!(exported, expected);
-    }
-
-    #[test]
-    fn test_unclosed_box_rejected() {
-        let err = parse_err("sequenceDiagram\nbox Blue Group\nparticipant A");
-        assert!(err.contains("never closed"));
-    }
-
-    #[test]
-    fn test_from_mermaid_basic() {
-        let input = "sequenceDiagram
-    participant Alice
-    participant Bob
-    Alice->>Bob: Hello
-    Bob->>Alice: Hi";
-        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
-        assert_eq!(ids(&diagram), vec!["Alice", "Bob"]);
-        assert_eq!(diagram.events.len(), 2);
-    }
-
-    #[test]
-    fn test_from_mermaid_auto_participants() {
-        let input = "sequenceDiagram
-    Alice->>Bob: Hello";
-        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
-        assert_eq!(ids(&diagram), vec!["Alice", "Bob"]);
-    }
-
-    #[test]
-    fn test_invalid_header() {
-        assert_eq!(
-            parse_err("Alice->>Bob: Hello"),
-            "line 1: first line must be 'sequenceDiagram'"
-        );
-        assert_eq!(
-            parse_err("%% only a comment\n"),
-            "missing 'sequenceDiagram' header"
-        );
-    }
-
-    #[test]
-    fn test_note_right() {
-        let input = "sequenceDiagram
-    participant Alice
-    Note right of Alice: This is a note";
-        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
-        assert_eq!(diagram.events.len(), 1);
-        if let Event::Note {
-            position,
-            participant_start,
-            text,
-            ..
-        } = &diagram.events[0]
-        {
-            assert_eq!(*position, NotePosition::Right);
-            assert_eq!(*participant_start, 0);
-            assert_eq!(text, "This is a note");
-        } else {
-            panic!("Expected Note event");
-        }
-    }
-
-    #[test]
-    fn test_note_over_multiple() {
-        let input = "sequenceDiagram
-    participant Alice
-    participant Bob
-    Note over Alice,Bob: Spanning note";
-        let diagram = SequenceDiagram::from_mermaid(input).unwrap();
-        assert_eq!(diagram.events.len(), 1);
-        if let Event::Note {
-            position,
-            participant_start,
-            participant_end,
-            text,
-        } = &diagram.events[0]
-        {
-            assert_eq!(*position, NotePosition::Over);
-            assert_eq!(*participant_start, 0);
-            assert_eq!(*participant_end, 1);
-            assert_eq!(text, "Spanning note");
-        } else {
-            panic!("Expected Note event");
-        }
-    }
-
-    #[test]
-    fn test_note_roundtrip() {
-        let mut diagram = SequenceDiagram::new();
-        diagram.add_participant("Alice");
-        diagram.add_participant("Bob");
-        diagram.add_note(NotePosition::Right, 0, 0, "Right note".to_string());
-        diagram.add_note(NotePosition::Left, 1, 1, "Left note".to_string());
-        diagram.add_note(NotePosition::Over, 0, 1, "Over note".to_string());
-
-        let mermaid = diagram.to_mermaid();
-        let parsed = SequenceDiagram::from_mermaid(&mermaid).unwrap();
-
-        assert_eq!(parsed.participants, diagram.participants);
-        assert_eq!(parsed.events.len(), 3);
-    }
-
-    const FRAME_SOURCE: &str = "sequenceDiagram
-    participant A
-    participant B
-    loop Every minute
-        A->>B: ping
-        Note over B: n
-    end
-    B->>A: pong
-    opt
-        A->>B: x
-    end
-";
-
-    fn framed() -> SequenceDiagram {
-        SequenceDiagram::from_mermaid(FRAME_SOURCE).unwrap()
-    }
-
-    fn msg(d: &mut SequenceDiagram, text: &str) {
-        d.add_message(0, 1, text.to_string());
-    }
-
-    fn frame_ranges(d: &SequenceDiagram) -> Vec<(usize, usize)> {
-        d.fragments.iter().map(|f| (f.start, f.end)).collect()
-    }
+    // frames and sections
 
     #[test]
     fn test_frame_parse_all_kinds_with_and_without_label() {
@@ -2049,106 +1995,24 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_export_and_exact_roundtrip() {
+    fn test_framed_diagram_ranges_and_heights() {
         let d = framed();
+
         assert_eq!(frame_ranges(&d), vec![(0, 1), (3, 3)]);
-        assert_eq!(d.to_mermaid(), FRAME_SOURCE);
+        assert_eq!(d.event_height(0), 4);
+        assert_eq!(d.event_height(1), 3);
+        assert_eq!(d.event_height(2), 3);
+        assert_eq!(d.event_height(3), 5);
     }
 
     #[test]
-    fn test_frame_after_box_each_has_own_end() {
-        let source = "sequenceDiagram\n    box Blue Team\n        participant A\n        participant B\n    end\n    loop L\n        A->>B: x\n    end\n";
-        let d = SequenceDiagram::from_mermaid(source).unwrap();
-        assert_eq!(d.boxes.len(), 1);
-        assert_eq!(d.fragments.len(), 1);
-        assert_eq!(d.to_mermaid(), source);
-    }
-
-    #[test]
-    fn test_frame_errors_have_line_numbers() {
-        let cases = [
-            (
-                "sequenceDiagram\nloop a\nopt b\nA->>B: x\nend\nend",
-                "line 3: nested frames are not supported yet",
-            ),
-            (
-                "sequenceDiagram\nloop a\nrect b",
-                "line 3: 'rect' blocks are not supported yet",
-            ),
-            (
-                "sequenceDiagram\nloop a\nend",
-                "line 3: 'loop' block is empty",
-            ),
-            (
-                "sequenceDiagram\nloop a\nA->>B: x",
-                "line 2: 'loop' is never closed",
-            ),
-            (
-                "sequenceDiagram\nloop a\nbox\nend",
-                "line 3: 'box' inside a frame is not supported",
-            ),
-            (
-                "sequenceDiagram\nbox\nloop a",
-                "line 3: frames inside a box are not supported",
-            ),
-            (
-                "sequenceDiagram\nloop a\nA->>B: x\nend\nend",
-                "line 5: unexpected 'end'",
-            ),
-            (
-                "sequenceDiagram\nA->>B: x\nelse y",
-                "line 3: 'else' is only allowed inside 'alt'",
-            ),
-            (
-                "sequenceDiagram\nloop a\nA->>B: x\nelse y\nend",
-                "line 4: 'else' is only allowed inside 'alt'",
-            ),
-            (
-                "sequenceDiagram\nalt a\nA->>B: x\nelse y\nelse z\nA->>B: x\nend",
-                "line 5: empty section before 'else'",
-            ),
-            (
-                "sequenceDiagram\nalt a\nelse y\nA->>B: x\nend",
-                "line 3: empty section before 'else'",
-            ),
-            (
-                "sequenceDiagram\nalt a\nA->>B: x\nelse y\nend",
-                "line 5: empty section before 'end'",
-            ),
-            (
-                "sequenceDiagram\nalt a\nend",
-                "line 3: 'alt' block is empty",
-            ),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(parse_err(input), expected, "{input}");
-        }
-    }
-
-    const ALT_SOURCE: &str = "sequenceDiagram
-    participant A
-    participant B
-    A->>B: before
-    alt ok
-        A->>B: one
-        A->>B: two
-    else expired
-        B->>A: three
-    else
-        B->>A: four
-    end
-    A->>B: after
-";
-
-    /// Checks the section invariants of every frame.
-    fn assert_sections_valid(d: &SequenceDiagram) {
-        for f in &d.fragments {
-            let mut previous = f.start;
-            for (at, _) in &f.sections {
-                assert!(*at > previous && *at <= f.end, "{:?}", f.sections);
-                previous = *at;
-            }
-        }
+    fn test_multiline_event_heights() {
+        let d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nloop\nA->>B: x<br/>y\nend\nNote right of B: a<br>b<br>c\n",
+        )
+        .unwrap();
+        assert_eq!(d.event_height(0), 6);
+        assert_eq!(d.event_height(1), 4);
     }
 
     #[test]
@@ -2161,21 +2025,6 @@ mod tests {
         assert_eq!(f.label, "ok");
         assert_eq!(f.sections, [(3, "expired".to_string()), (4, String::new())]);
         assert_sections_valid(&d);
-    }
-
-    #[test]
-    fn test_alt_sections_exact_roundtrip() {
-        let d = SequenceDiagram::from_mermaid(ALT_SOURCE).unwrap();
-        assert_eq!(d.to_mermaid(), ALT_SOURCE);
-        assert_reimports_equal(&d);
-    }
-
-    #[test]
-    fn test_divider_label_with_arrow_roundtrips() {
-        let source = "sequenceDiagram\n    participant A\n    participant B\n    alt a\n        A->>B: x\n    else a->>b\n        A->>B: y\n    end\n";
-        let d = SequenceDiagram::from_mermaid(source).unwrap();
-        assert_eq!(d.fragments[0].sections[0].1, "a->>b");
-        assert_eq!(d.to_mermaid(), source);
     }
 
     #[test]
@@ -2198,24 +2047,6 @@ mod tests {
                 assert_sections_valid(&d);
                 assert_eq!(d.to_mermaid(), source, "{keyword}");
             }
-        }
-    }
-
-    #[test]
-    fn test_divider_word_must_match_the_frame_kind() {
-        let cases = [
-            ("par", "else", "alt"),
-            ("alt", "and", "par"),
-            ("par", "option", "critical"),
-            ("critical", "else", "alt"),
-            ("opt", "and", "par"),
-        ];
-        for (keyword, word, expected) in cases {
-            let source = format!("sequenceDiagram\n{keyword}\nA->>B: x\n{word} y\nA->>B: z\nend");
-            assert_eq!(
-                parse_err(&source),
-                format!("line 4: '{word}' is only allowed inside '{expected}'"),
-            );
         }
     }
 
@@ -2248,12 +2079,7 @@ mod tests {
 
     #[test]
     fn test_add_fragment_rejects_overlap_and_bad_ranges() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("A");
-        d.add_participant("B");
-        for t in ["1", "2", "3", "4"] {
-            msg(&mut d, t);
-        }
+        let mut d = numbered(4);
 
         assert!(d.add_fragment(FragmentKind::Loop, String::new(), 1, 2));
         assert!(!d.add_fragment(FragmentKind::Opt, String::new(), 2, 3));
@@ -2262,156 +2088,6 @@ mod tests {
         assert!(!d.add_fragment(FragmentKind::Opt, String::new(), 3, 2));
         assert!(d.add_fragment(FragmentKind::Opt, String::new(), 3, 3));
         assert_eq!(frame_ranges(&d), vec![(1, 2), (3, 3)]);
-    }
-
-    #[test]
-    fn test_insert_relative_joins_frame_of_anchor_only() {
-        let event = || Event::Message {
-            from: 0,
-            to: 1,
-            text: "new".to_string(),
-            style: ArrowStyle::default(),
-        };
-        let inserted = |anchor: Option<usize>, before: bool| {
-            let mut d = framed();
-            let idx = d.insert_relative(anchor, before, event());
-            (idx, frame_ranges(&d))
-        };
-
-        // before the first framed event: still inside
-        assert_eq!(inserted(Some(0), true), (0, vec![(0, 2), (4, 4)]));
-        // after the last framed event: inside
-        assert_eq!(inserted(Some(1), false), (2, vec![(0, 2), (4, 4)]));
-        // unframed anchor: outside, both directions
-        assert_eq!(inserted(Some(2), true), (2, vec![(0, 1), (4, 4)]));
-        assert_eq!(inserted(Some(2), false), (3, vec![(0, 1), (4, 4)]));
-        // before a single-event frame's event: inside it
-        assert_eq!(inserted(Some(3), true), (3, vec![(0, 1), (3, 4)]));
-        // nothing selected: appended outside
-        assert_eq!(inserted(None, false), (4, vec![(0, 1), (3, 3)]));
-    }
-
-    #[test]
-    fn test_remove_event_shrinks_and_drops_frames() {
-        let mut d = framed();
-        d.remove_event(0);
-        assert_eq!(frame_ranges(&d), vec![(0, 0), (2, 2)]);
-
-        d.remove_event(0);
-        assert_eq!(frame_ranges(&d), vec![(1, 1)]);
-
-        d.remove_event(1);
-        assert_eq!(d.fragments.len(), 0);
-    }
-
-    #[test]
-    fn test_remove_participant_updates_frames() {
-        let mut d = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nA->>B: 1\nloop\nA->>C: 2\nB->>A: 3\nend\nB->>C: 4",
-        )
-        .unwrap();
-        assert_eq!(frame_ranges(&d), vec![(1, 2)]);
-
-        d.remove_participant(2);
-        assert_eq!(frame_ranges(&d), vec![(1, 1)]);
-
-        d.remove_participant(0);
-        assert_eq!(d.fragments.len(), 0);
-        assert_eq!(d.event_count(), 0);
-    }
-
-    #[test]
-    fn test_move_event_leaves_and_enters_frames() {
-        let mut d = framed();
-
-        // J on the last framed event leaves the frame without reordering
-        assert_eq!(d.move_event(1, true), 1);
-        assert_eq!(frame_ranges(&d), vec![(0, 0), (3, 3)]);
-
-        // outside events swap normally
-        assert_eq!(d.move_event(1, true), 2);
-        assert_eq!(frame_ranges(&d), vec![(0, 0), (3, 3)]);
-
-        // J on the event above a frame enters it
-        assert_eq!(d.move_event(2, true), 2);
-        assert_eq!(frame_ranges(&d), vec![(0, 0), (2, 3)]);
-
-        // K on the first framed event leaves it
-        assert_eq!(d.move_event(2, false), 2);
-        assert_eq!(frame_ranges(&d), vec![(0, 0), (3, 3)]);
-
-        // K on the event below a frame enters it
-        assert_eq!(d.move_event(1, false), 1);
-        assert_eq!(frame_ranges(&d), vec![(0, 1), (3, 3)]);
-    }
-
-    #[test]
-    fn test_move_event_swaps_inside_frame_and_removes_single_event_frame() {
-        let mut d = framed();
-        assert_eq!(d.move_event(0, true), 1);
-        assert_eq!(frame_ranges(&d), vec![(0, 1), (3, 3)]);
-
-        assert_eq!(d.move_event(3, false), 3);
-        assert_eq!(frame_ranges(&d), vec![(0, 1)]);
-    }
-
-    #[test]
-    fn test_move_event_never_overlaps_frames() {
-        let mut d = framed();
-        d.move_event(2, true);
-        d.move_event(2, true);
-        for pair in d.fragments.windows(2) {
-            assert!(pair[0].end < pair[1].start);
-        }
-    }
-
-    fn numbered(n: usize) -> SequenceDiagram {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("A");
-        d.add_participant("B");
-        for i in 0..n {
-            msg(&mut d, &i.to_string());
-        }
-        d
-    }
-
-    fn texts(d: &SequenceDiagram) -> String {
-        d.events.iter().map(Event::text).collect()
-    }
-
-    fn assert_reimports_equal(d: &SequenceDiagram) {
-        let again = SequenceDiagram::from_mermaid(&d.to_mermaid()).unwrap();
-        assert!(again == *d);
-    }
-
-    /// Events 0..n with an alt frame over `start..=end` and dividers at `at`.
-    fn sectioned(n: usize, start: usize, end: usize, at: &[usize]) -> SequenceDiagram {
-        let mut d = numbered(n);
-        assert!(d.add_fragment(FragmentKind::Alt, "f".into(), start, end));
-        for &a in at {
-            assert!(d.add_section(0, a, format!("s{a}")).is_some());
-        }
-        d
-    }
-
-    fn divider_starts(d: &SequenceDiagram) -> Vec<usize> {
-        d.fragments[0].sections.iter().map(|(at, _)| *at).collect()
-    }
-
-    fn message_to(d: &SequenceDiagram, text: &str) -> Event {
-        Event::Message {
-            from: 0,
-            to: 1,
-            text: text.into(),
-            style: d
-                .events
-                .iter()
-                .find_map(|e| match e {
-                    Event::Message { style, .. } => Some(*style),
-                    Event::Note { .. } => None,
-                })
-                .unwrap_or_default(),
-        }
     }
 
     #[test]
@@ -2466,94 +2142,113 @@ mod tests {
         assert_sections_valid(&d);
     }
 
-    #[test]
-    fn test_insert_at_section_boundary_lands_in_anchor_section() {
-        // Divider before event 2: after anchor 1 stays in the section above.
-        let mut d = sectioned(4, 0, 3, &[2]);
-        let new = message_to(&d, "n");
-        assert_eq!(d.insert_relative(Some(1), false, new), 2);
-        assert_eq!(divider_starts(&d), [3]);
+    // inserting events
 
-        // Before anchor 2 (first of its section) it joins that section.
-        let mut d = sectioned(4, 0, 3, &[2]);
-        let new = message_to(&d, "n");
-        assert_eq!(d.insert_relative(Some(2), true, new), 2);
-        assert_eq!(divider_starts(&d), [2]);
+    #[rstest]
+    #[case::success_before_first_framed_event_joins_frame(Some(0), true, 0, vec![(0, 2), (4, 4)])]
+    #[case::success_after_last_framed_event_joins_frame(Some(1), false, 2, vec![(0, 2), (4, 4)])]
+    #[case::success_before_free_event_stays_outside_frame(Some(2), true, 2, vec![(0, 1), (4, 4)])]
+    #[case::success_after_free_event_stays_outside_frame(Some(2), false, 3, vec![(0, 1), (4, 4)])]
+    #[case::success_before_event_of_second_frame_joins_it(Some(3), true, 3, vec![(0, 1), (3, 4)])]
+    #[case::success_no_anchor_appends_outside_frames(None, false, 4, vec![(0, 1), (3, 3)])]
+    fn test_insert_relative_joins_frame_of_anchor_only(
+        #[case] given_anchor: Option<usize>,
+        #[case] given_before: bool,
+        #[case] expected_idx: usize,
+        #[case] expected_frames: Vec<(usize, usize)>,
+    ) {
+        let mut d = framed();
+        let event = message_to(&d, "new");
 
-        // Inside a section: dividers below move down.
-        let mut d = sectioned(4, 0, 3, &[2]);
-        let new = message_to(&d, "n");
-        d.insert_relative(Some(0), false, new);
-        assert_eq!(divider_starts(&d), [3]);
-        assert_eq!(d.fragments[0].end, 4);
-        assert_sections_valid(&d);
-        assert_reimports_equal(&d);
+        let idx = d.insert_relative(given_anchor, given_before, event);
+
+        assert_eq!(idx, expected_idx);
+        assert_eq!(frame_ranges(&d), expected_frames);
+    }
+
+    #[rstest]
+    #[case::success_after_last_event_of_section(sectioned(4, 0, 3, &[2]), Some(1), false, 2, vec![3], (0, 4))]
+    #[case::success_before_first_event_of_next_section(sectioned(4, 0, 3, &[2]), Some(2), true, 2, vec![2], (0, 4))]
+    #[case::success_after_first_event_before_divider(sectioned(4, 0, 3, &[2]), Some(0), false, 1, vec![3], (0, 4))]
+    #[case::success_before_first_framed_event(sectioned(5, 1, 4, &[3]), Some(1), true, 1, vec![4], (1, 5))]
+    #[case::success_after_event_before_frame(sectioned(5, 1, 4, &[3]), Some(0), false, 1, vec![4], (2, 5))]
+    fn test_insert_next_to_divider_lands_in_anchor_section(
+        #[case] mut given_diagram: SequenceDiagram,
+        #[case] given_anchor: Option<usize>,
+        #[case] given_before: bool,
+        #[case] expected_idx: usize,
+        #[case] expected_starts: Vec<usize>,
+        #[case] expected_frame: (usize, usize),
+    ) {
+        let event = message_to(&given_diagram, "n");
+
+        let idx = given_diagram.insert_relative(given_anchor, given_before, event);
+
+        assert_eq!(idx, expected_idx);
+        assert_eq!(divider_starts(&given_diagram), expected_starts);
+        assert_eq!(frame_ranges(&given_diagram), [expected_frame]);
+        assert_sections_valid(&given_diagram);
+        assert_reimports_equal(&given_diagram);
     }
 
     #[test]
-    fn test_insert_at_divider_above_and_below() {
-        // Below the divider: before its first event.
-        let mut d = sectioned(4, 0, 3, &[2]);
-        let new = message_to(&d, "below");
-        assert_eq!(d.insert_relative(Some(2), true, new), 2);
-        assert_eq!(divider_starts(&d), [2]);
-        assert_eq!(texts(&d), "01below23");
+    fn test_insert_at_frame_inside_vs_before() {
+        let mut d = numbered(2);
+        d.add_fragment(FragmentKind::Opt, String::new(), 1, 1);
 
-        // Above the divider: after the last event of the section above.
-        let mut d = sectioned(4, 0, 3, &[2]);
-        let new = message_to(&d, "above");
-        assert_eq!(d.insert_relative(Some(1), false, new), 2);
-        assert_eq!(divider_starts(&d), [3]);
-        assert_sections_valid(&d);
+        assert_eq!(d.insert_at_frame(0, true, message_to(&d, "in")), 1);
+        assert_eq!(texts(&d), "0in1");
+        assert_eq!(frame_ranges(&d), vec![(1, 2)]);
+
+        assert_eq!(d.insert_at_frame(0, false, message_to(&d, "out")), 1);
+        assert_eq!(texts(&d), "0outin1");
+        assert_eq!(frame_ranges(&d), vec![(2, 3)]);
     }
 
     #[test]
-    fn test_insert_frame_edge_and_before_frame_shift_dividers() {
+    fn test_insert_at_frame_inside_shifts_dividers() {
         let mut d = sectioned(5, 1, 4, &[3]);
         let new = message_to(&d, "n");
-        d.insert_relative(Some(1), true, new);
-        assert_eq!(divider_starts(&d), [4]);
-        assert_eq!((d.fragments[0].start, d.fragments[0].end), (1, 5));
 
-        let mut d = sectioned(5, 1, 4, &[3]);
-        let new = message_to(&d, "n");
-        d.insert_relative(Some(0), false, new);
-        assert_eq!(divider_starts(&d), [4]);
-        assert_eq!((d.fragments[0].start, d.fragments[0].end), (2, 5));
-
-        let mut d = sectioned(5, 1, 4, &[3]);
-        let new = message_to(&d, "n");
         d.insert_at_frame(0, true, new);
+
         assert_eq!(divider_starts(&d), [4]);
         assert_sections_valid(&d);
     }
 
+    // removing events
+
     #[test]
-    fn test_remove_event_in_sections() {
-        // middle of a section
-        let mut d = sectioned(7, 1, 6, &[3, 5]);
-        d.remove_event(2);
-        assert_eq!(divider_starts(&d), [2, 4]);
-        assert_sections_valid(&d);
-
-        // first event of a section keeps the divider on the next event
-        let mut d = sectioned(7, 1, 6, &[3, 5]);
-        d.remove_event(3);
-        assert_eq!(divider_starts(&d), [3, 4]);
-
-        // last event of the last section
-        let mut d = sectioned(7, 1, 6, &[3, 5]);
-        d.remove_event(6);
-        assert_eq!(divider_starts(&d), [3, 5]);
-        d.remove_event(5);
-        assert_eq!(divider_starts(&d), [3]);
-        assert_eq!(d.fragments[0].end, 4);
-
-        // before the frame
-        let mut d = sectioned(7, 1, 6, &[3, 5]);
+    fn test_remove_event_shrinks_and_drops_frames() {
+        let mut d = framed();
         d.remove_event(0);
-        assert_eq!(divider_starts(&d), [2, 4]);
-        assert_eq!(d.fragments[0].start, 0);
+        assert_eq!(frame_ranges(&d), vec![(0, 0), (2, 2)]);
+
+        d.remove_event(0);
+        assert_eq!(frame_ranges(&d), vec![(1, 1)]);
+
+        d.remove_event(1);
+        assert_eq!(d.fragments.len(), 0);
+    }
+
+    #[rstest]
+    #[case::success_remove_event_in_first_section(vec![2], vec![2, 4], (1, 5))]
+    #[case::success_remove_first_event_of_section(vec![3], vec![3, 4], (1, 5))]
+    #[case::success_remove_last_events_drops_divider(vec![6, 5], vec![3], (1, 4))]
+    #[case::success_remove_event_before_frame(vec![0], vec![2, 4], (0, 5))]
+    fn test_remove_event_in_sections(
+        #[case] given_removed: Vec<usize>,
+        #[case] expected_starts: Vec<usize>,
+        #[case] expected_frame: (usize, usize),
+    ) {
+        let mut d = sectioned(7, 1, 6, &[3, 5]);
+
+        for idx in given_removed {
+            d.remove_event(idx);
+        }
+
+        assert_eq!(divider_starts(&d), expected_starts);
+        assert_eq!(frame_ranges(&d), [expected_frame]);
         assert_sections_valid(&d);
     }
 
@@ -2569,6 +2264,39 @@ mod tests {
         assert_reimports_equal(&d);
     }
 
+    // moving events
+
+    #[test]
+    fn test_move_event_leaves_and_enters_frames() {
+        let mut d = framed();
+
+        // J on the last framed event leaves the frame without reordering
+        assert_eq!(d.move_event(1, true), 1);
+        assert_eq!(frame_ranges(&d), vec![(0, 0), (3, 3)]);
+
+        assert_eq!(d.move_event(1, true), 2);
+        assert_eq!(frame_ranges(&d), vec![(0, 0), (3, 3)]);
+
+        assert_eq!(d.move_event(2, true), 2);
+        assert_eq!(frame_ranges(&d), vec![(0, 0), (2, 3)]);
+
+        assert_eq!(d.move_event(2, false), 2);
+        assert_eq!(frame_ranges(&d), vec![(0, 0), (3, 3)]);
+
+        assert_eq!(d.move_event(1, false), 1);
+        assert_eq!(frame_ranges(&d), vec![(0, 1), (3, 3)]);
+    }
+
+    #[test]
+    fn test_move_event_swaps_inside_frame_and_removes_single_event_frame() {
+        let mut d = framed();
+        assert_eq!(d.move_event(0, true), 1);
+        assert_eq!(frame_ranges(&d), vec![(0, 1), (3, 3)]);
+
+        assert_eq!(d.move_event(3, false), 3);
+        assert_eq!(frame_ranges(&d), vec![(0, 1)]);
+    }
+
     #[test]
     fn test_move_event_across_divider_moves_the_divider() {
         let mut d = sectioned(6, 0, 5, &[3]);
@@ -2582,22 +2310,21 @@ mod tests {
         assert_sections_valid(&d);
     }
 
-    #[test]
-    fn test_move_event_that_empties_a_section_drops_the_divider() {
-        let mut d = sectioned(4, 0, 3, &[1, 2]);
-        d.move_event(1, false);
-        assert_eq!(divider_starts(&d), [2]);
-        assert_eq!(d.fragments[0].sections[0].1, "s2");
-        assert_sections_valid(&d);
+    #[rstest]
+    #[case::success_move_down_from_single_event_section(&[1, 2], 1, false, vec![2])]
+    #[case::success_move_last_event_out_of_frame(&[1, 3], 3, true, vec![1])]
+    #[case::success_move_up_from_single_event_section(&[1, 2], 1, true, vec![1])]
+    fn test_move_event_that_empties_a_section_drops_the_divider(
+        #[case] given_at: &[usize],
+        #[case] given_idx: usize,
+        #[case] given_down: bool,
+        #[case] expected_starts: Vec<usize>,
+    ) {
+        let mut d = sectioned(4, 0, 3, given_at);
 
-        let mut d = sectioned(4, 0, 3, &[1, 3]);
-        d.move_event(3, true);
-        assert_eq!(divider_starts(&d), [1]);
-        assert_eq!(d.fragments[0].end, 2);
+        d.move_event(given_idx, given_down);
 
-        let mut d = sectioned(4, 0, 3, &[1, 2]);
-        d.move_event(1, true);
-        assert_eq!(divider_starts(&d), [1]);
+        assert_eq!(divider_starts(&d), expected_starts);
         assert_sections_valid(&d);
         assert_reimports_equal(&d);
     }
@@ -2612,6 +2339,8 @@ mod tests {
         assert_sections_valid(&d);
     }
 
+    // moving frames
+
     #[test]
     fn test_move_fragment_moves_dividers_along() {
         let mut d = sectioned(6, 1, 3, &[2]);
@@ -2623,42 +2352,6 @@ mod tests {
         assert_eq!(divider_starts(&d), [1]);
         assert_sections_valid(&d);
         assert_reimports_equal(&d);
-    }
-
-    #[test]
-    fn test_swap_adjacent_frames_moves_their_dividers() {
-        let mut d = numbered(6);
-        d.add_fragment(FragmentKind::Alt, "a".into(), 0, 1);
-        d.add_section(0, 1, "x".into());
-        d.add_fragment(FragmentKind::Alt, "b".into(), 2, 5);
-        d.add_section(1, 4, "y".into());
-
-        assert_eq!(d.move_fragment(0, true), 1);
-        assert_eq!(d.fragments[0].label, "b");
-        assert_eq!(d.fragments[0].sections[0].0, 2);
-        assert_eq!(d.fragments[1].sections[0].0, 5);
-
-        assert_eq!(d.move_fragment(1, false), 0);
-        assert_eq!(d.fragments[0].label, "a");
-        assert_eq!(d.fragments[0].sections[0].0, 1);
-        assert_eq!(d.fragments[1].sections[0].0, 4);
-        assert_reimports_equal(&d);
-    }
-
-    #[test]
-    fn test_remove_participant_with_sections() {
-        let mut d = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nalt a\nA->>B: 1\nelse b\nA->>C: 2\nelse c\nB->>A: 3\nend",
-        )
-        .unwrap();
-
-        d.remove_participant(2);
-        assert_eq!(divider_starts(&d), [1]);
-        assert_eq!(d.fragments[0].sections[0].1, "c");
-        assert_sections_valid(&d);
-
-        d.remove_participant(1);
-        assert_eq!(d.fragments.len(), 0);
     }
 
     #[test]
@@ -2683,22 +2376,26 @@ mod tests {
     }
 
     #[test]
-    fn test_move_fragment_swaps_with_adjacent_frame() {
-        let mut d = numbered(5);
-        d.add_fragment(FragmentKind::Opt, "a".into(), 0, 1);
-        d.add_fragment(FragmentKind::Loop, "b".into(), 2, 4);
+    fn test_move_fragment_swaps_with_adjacent_frame_and_moves_dividers() {
+        let mut d = numbered(6);
+        d.add_fragment(FragmentKind::Alt, "a".into(), 0, 1);
+        d.add_section(0, 1, "x".into());
+        d.add_fragment(FragmentKind::Alt, "b".into(), 2, 5);
+        d.add_section(1, 4, "y".into());
 
         assert_eq!(d.move_fragment(0, true), 1);
-        assert_eq!(texts(&d), "23401");
-        assert_eq!(frame_ranges(&d), vec![(0, 2), (3, 4)]);
+        assert_eq!(texts(&d), "234501");
+        assert_eq!(frame_ranges(&d), vec![(0, 3), (4, 5)]);
         assert_eq!(d.fragments[0].label, "b");
-        assert_eq!(d.fragments[1].label, "a");
+        assert_eq!(d.fragments[0].sections[0].0, 2);
+        assert_eq!(d.fragments[1].sections[0].0, 5);
         assert_reimports_equal(&d);
 
         assert_eq!(d.move_fragment(1, false), 0);
-        assert_eq!(texts(&d), "01234");
-        assert_eq!(frame_ranges(&d), vec![(0, 1), (2, 4)]);
+        assert_eq!(texts(&d), "012345");
         assert_eq!(d.fragments[0].label, "a");
+        assert_eq!(d.fragments[0].sections[0].0, 1);
+        assert_eq!(d.fragments[1].sections[0].0, 4);
         assert_reimports_equal(&d);
     }
 
@@ -2712,99 +2409,7 @@ mod tests {
         assert!(d == before);
     }
 
-    #[test]
-    fn test_insert_at_frame_inside_vs_before() {
-        let mut d = numbered(2);
-        d.add_fragment(FragmentKind::Opt, String::new(), 1, 1);
-        let event = |text: &str| Event::Message {
-            from: 0,
-            to: 1,
-            text: text.to_string(),
-            style: ArrowStyle::default(),
-        };
-
-        assert_eq!(d.insert_at_frame(0, true, event("in")), 1);
-        assert_eq!(texts(&d), "0in1");
-        assert_eq!(frame_ranges(&d), vec![(1, 2)]);
-
-        assert_eq!(d.insert_at_frame(0, false, event("out")), 1);
-        assert_eq!(texts(&d), "0outin1");
-        assert_eq!(frame_ranges(&d), vec![(2, 3)]);
-    }
-
-    #[test]
-    fn test_event_height_counts_frame_rows() {
-        let d = framed();
-        assert_eq!(d.event_height(0), 4);
-        assert_eq!(d.event_height(1), 3);
-        assert_eq!(d.event_height(2), 3);
-        assert_eq!(d.event_height(3), 5);
-    }
-
-    #[test]
-    fn test_multiline_event_heights() {
-        let d = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nloop\nA->>B: x<br/>y\nend\nNote right of B: a<br>b<br>c\n",
-        )
-        .unwrap();
-        assert_eq!(d.event_height(0), 6);
-        assert_eq!(d.event_height(1), 4);
-    }
-
-    #[test]
-    fn test_line_breaks_round_trip() {
-        let source = "sequenceDiagram\n    autonumber\n    participant A\n    participant B\n    A->>B: first line<br/>second line\n    B->>B: self<BR>loop\n    Note right of B: a<br />b<br/>c\n    loop retry\n        Note over A,B: framed<br>note\n    end\n";
-        let d = SequenceDiagram::from_mermaid(source).unwrap();
-        assert_eq!(d.to_mermaid(), source);
-        assert_eq!(d.events[0].text(), "first line<br/>second line");
-        assert_eq!(d.events[1].text(), "self<BR>loop");
-        assert_eq!(d.events[2].text(), "a<br />b<br/>c");
-    }
-
-    #[test]
-    fn test_autonumber_parse_and_export() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nautonumber\nautonumber\nA->>B: hi")
-            .unwrap();
-        assert!(d.autonumber);
-        assert_eq!(
-            d.to_mermaid(),
-            "sequenceDiagram\n    autonumber\n    participant A\n    participant B\n    A->>B: hi\n"
-        );
-    }
-
-    #[test]
-    fn test_autonumber_roundtrip_with_note_and_frame() {
-        let text = "sequenceDiagram\n    autonumber\n    box Blue Team\n        participant A\n    end\n    participant B\n    A->>B: hi\n    loop Retry\n        Note over A: n\n        B->>A: ok\n    end\n";
-        let d = SequenceDiagram::from_mermaid(text).unwrap();
-        assert_eq!(d.to_mermaid(), text);
-    }
-
-    #[test]
-    fn test_no_autonumber_line_when_off() {
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: hi").unwrap();
-        assert!(!d.to_mermaid().contains("autonumber"));
-    }
-
-    #[test]
-    fn test_autonumber_rejections() {
-        for line in ["autonumber 10", "autonumber 10 5", "autonumber off"] {
-            let err = parse_err(&format!("sequenceDiagram\n{line}"));
-            assert_eq!(err, "line 2: 'autonumber' options are not supported yet");
-        }
-
-        let position = "line 3: 'autonumber' must come before the first message or note";
-        assert_eq!(parse_err("sequenceDiagram\nA->>B: x\nautonumber"), position);
-
-        let nested = "'autonumber' is not supported inside a box or frame";
-        assert_eq!(
-            parse_err("sequenceDiagram\nbox\nparticipant A\nautonumber"),
-            format!("line 4: {nested}")
-        );
-        assert_eq!(
-            parse_err("sequenceDiagram\nloop\nautonumber"),
-            format!("line 3: {nested}")
-        );
-    }
+    // autonumber
 
     #[test]
     fn test_message_number() {
@@ -2817,53 +2422,5 @@ mod tests {
 
         assert!(!d.toggle_autonumber());
         assert!((0..4).all(|i| d.message_number(i).is_none()));
-    }
-
-    #[test]
-    fn test_autonumber_is_still_a_reserved_id() {
-        let mut d = SequenceDiagram::new();
-        d.add_participant("autonumber");
-        assert_eq!(d.participants[0].id, "autonumber2");
-        assert_eq!(d.participants[0].label.as_deref(), Some("autonumber"));
-    }
-
-    #[test]
-    fn test_arrow_tokens_in_box_label_roundtrip() {
-        for label in ["Blue a-xb", "re-x)port", "a->>b"] {
-            let source =
-                format!("sequenceDiagram\n    box {label}\n        participant A\n    end\n");
-            let d = SequenceDiagram::from_mermaid(&source).unwrap();
-
-            assert_eq!(d.to_mermaid(), source, "{label}");
-        }
-    }
-
-    #[test]
-    fn test_arrow_tokens_in_frame_label_and_note_roundtrip() {
-        let source = "sequenceDiagram
-    participant A
-    participant B
-    loop a->>b
-        A->>B: x
-        Note over A: see -x here
-    end
-";
-        let d = SequenceDiagram::from_mermaid(source).unwrap();
-
-        assert_eq!(d.fragments[0].label, "a->>b");
-        assert_eq!(d.to_mermaid(), source);
-    }
-
-    #[test]
-    fn test_unclosed_block_names_opening_line() {
-        let err = parse_err("sequenceDiagram\nparticipant A\nloop x\nA->>A: y");
-        assert_eq!(err, "line 3: 'loop' is never closed");
-
-        let err = parse_err("sequenceDiagram\nbox ->> A: x\nparticipant A\n");
-        assert_eq!(err, "line 2: 'box' is never closed");
-
-        let d = SequenceDiagram::from_mermaid("sequenceDiagram\nbox ->> A: x\nparticipant A\nend")
-            .unwrap();
-        assert_eq!(d.boxes[0].label, "->> A: x");
     }
 }

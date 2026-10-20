@@ -180,232 +180,233 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    #[test]
-    fn clamp_keeps_valid_selection() {
-        assert_eq!(
-            Selection::Participant(1).clamp(2, 0, 0, 0),
-            Selection::Participant(1)
-        );
-        assert_eq!(Selection::Event(2).clamp(2, 3, 0, 0), Selection::Event(2));
-    }
+    const BOX_AB_C: &str = "sequenceDiagram\n    box A\n        participant A\n        participant B\n    end\n    participant C\n";
+    const X_BOX_A_BOX_B: &str = "sequenceDiagram\n    participant X\n    box\n        participant A\n    end\n    box\n        participant B\n    end\n";
+    const BOX_A_THEN_EVENT: &str = "sequenceDiagram\n    box\n        participant A\n    end\n    participant B\n    A->>B: x\n";
 
-    #[test]
-    fn clamp_limits_index_to_last() {
-        assert_eq!(
-            Selection::Participant(5).clamp(2, 0, 0, 0),
-            Selection::Participant(1)
-        );
-        assert_eq!(Selection::Event(5).clamp(2, 3, 0, 0), Selection::Event(2));
-    }
-
-    #[test]
-    fn clamp_event_without_events_falls_back_to_participant() {
-        assert_eq!(
-            Selection::Event(0).clamp(2, 0, 0, 0),
-            Selection::Participant(0)
-        );
-    }
-
-    #[test]
-    fn clamp_empty_diagram_clears_selection() {
-        assert_eq!(Selection::Participant(0).clamp(0, 0, 0, 0), Selection::None);
-        assert_eq!(Selection::Event(0).clamp(0, 0, 0, 0), Selection::None);
-        assert_eq!(Selection::None.clamp(2, 2, 0, 0), Selection::None);
-    }
-
-    fn diagram(body: &str) -> SequenceDiagram {
+    fn events_diagram(body: &str) -> SequenceDiagram {
         let source = format!("sequenceDiagram\n    participant A\n    participant B\n{body}");
         SequenceDiagram::from_mermaid(&source).unwrap()
     }
 
-    fn walk_down(d: &SequenceDiagram) -> Vec<Selection> {
-        let mut path = vec![Selection::Participant(0)];
+    fn walk(start: Selection, step: impl Fn(Selection) -> Selection) -> Vec<Selection> {
+        let mut path = vec![start];
         loop {
-            let next = path.last().unwrap().down(d);
-            if next == *path.last().unwrap() {
+            let last = *path.last().unwrap();
+            let next = step(last);
+            if next == last {
                 return path;
             }
             path.push(next);
         }
     }
 
-    #[test]
-    fn walk_visits_frame_header_before_first_event() {
-        let d = diagram("    A->>B: 0\n    opt\n        A->>B: 1\n    end\n    A->>B: 2\n");
-        let expected = [
+    #[rstest]
+    #[case::success_valid_participant_stays(
+        Selection::Participant(1),
+        2,
+        0,
+        0,
+        0,
+        Selection::Participant(1)
+    )]
+    #[case::success_valid_section_stays(
+        Selection::Section(1, 3),
+        2,
+        3,
+        2,
+        0,
+        Selection::Section(1, 3)
+    )]
+    #[case::success_participant_clamps_to_last(
+        Selection::Participant(5),
+        2,
+        0,
+        0,
+        0,
+        Selection::Participant(1)
+    )]
+    #[case::success_event_clamps_to_last(Selection::Event(5), 2, 3, 0, 0, Selection::Event(2))]
+    #[case::success_event_without_events_falls_back(
+        Selection::Event(0),
+        2,
+        0,
+        0,
+        0,
+        Selection::Participant(0)
+    )]
+    #[case::success_missing_frame_falls_back(
+        Selection::Fragment(1),
+        2,
+        3,
+        1,
+        0,
+        Selection::Participant(0)
+    )]
+    #[case::success_missing_section_frame_falls_back(
+        Selection::Section(1, 0),
+        2,
+        3,
+        1,
+        0,
+        Selection::Participant(0)
+    )]
+    #[case::success_missing_box_falls_back(
+        Selection::Box(1),
+        3,
+        0,
+        0,
+        1,
+        Selection::Participant(0)
+    )]
+    #[case::success_empty_diagram_gives_none(
+        Selection::Participant(0),
+        0,
+        0,
+        0,
+        0,
+        Selection::None
+    )]
+    fn clamp_keeps_valid_and_falls_back(
+        #[case] given_selection: Selection,
+        #[case] given_participants: usize,
+        #[case] given_events: usize,
+        #[case] given_frames: usize,
+        #[case] given_boxes: usize,
+        #[case] expected_selection: Selection,
+    ) {
+        assert_eq!(
+            given_selection.clamp(given_participants, given_events, given_frames, given_boxes),
+            expected_selection
+        );
+    }
+
+    #[rstest]
+    #[case::success_event_then_frame_then_event(
+        "    A->>B: 0\n    opt\n        A->>B: 1\n    end\n    A->>B: 2\n",
+        &[
             Selection::Participant(0),
             Selection::Event(0),
             Selection::Fragment(0),
             Selection::Event(1),
             Selection::Event(2),
-        ];
-        assert_eq!(walk_down(&d), expected);
-
-        let mut path = vec![Selection::Event(2)];
-        loop {
-            let last = *path.last().unwrap();
-            let next = last.up(&d);
-            if next == last {
-                break;
-            }
-            path.push(next);
-        }
-        assert_eq!(
-            path,
-            [
-                Selection::Event(2),
-                Selection::Event(1),
-                Selection::Fragment(0),
-                Selection::Event(0),
-                Selection::Participant(0),
-            ]
-        );
-    }
-
-    #[test]
-    fn walk_handles_frame_at_start_and_adjacent_frames() {
-        let d =
-            diagram("    opt\n        A->>B: 0\n    end\n    loop\n        A->>B: 1\n    end\n");
-        let expected = [
+        ]
+    )]
+    #[case::success_adjacent_frames(
+        "    opt\n        A->>B: 0\n    end\n    loop\n        A->>B: 1\n    end\n",
+        &[
             Selection::Participant(0),
             Selection::Fragment(0),
             Selection::Event(0),
             Selection::Fragment(1),
             Selection::Event(1),
-        ];
-        assert_eq!(walk_down(&d), expected);
-
-        assert_eq!(Selection::Fragment(0).up(&d), Selection::Participant(0));
-        assert_eq!(Selection::Fragment(1).up(&d), Selection::Event(0));
-    }
-
-    #[test]
-    fn clamp_fragment() {
-        assert_eq!(
-            Selection::Fragment(1).clamp(2, 3, 2, 0),
-            Selection::Fragment(1)
-        );
-        assert_eq!(
-            Selection::Fragment(1).clamp(2, 3, 1, 0),
-            Selection::Participant(0)
-        );
-        assert_eq!(Selection::Fragment(0).clamp(0, 0, 0, 0), Selection::None);
-    }
-
-    #[test]
-    fn walk_visits_divider_before_first_event_of_its_section() {
-        let d = diagram(
-            "    alt a\n        A->>B: 0\n    else b\n        A->>B: 1\n    end\n    A->>B: 2\n",
-        );
-        let expected = [
+        ]
+    )]
+    #[case::success_frame_with_divider(
+        "    alt a\n        A->>B: 0\n    else b\n        A->>B: 1\n    end\n    A->>B: 2\n",
+        &[
             Selection::Participant(0),
             Selection::Fragment(0),
             Selection::Event(0),
             Selection::Section(0, 0),
             Selection::Event(1),
             Selection::Event(2),
-        ];
-        assert_eq!(walk_down(&d), expected);
+        ]
+    )]
+    fn vertical_walk_visits_headers_and_dividers_and_reverses(
+        #[case] given_body: &str,
+        #[case] expected_walk: &[Selection],
+    ) {
+        let d = events_diagram(given_body);
 
-        let mut path = vec![Selection::Event(2)];
-        loop {
-            let last = *path.last().unwrap();
-            let next = last.up(&d);
-            if next == last {
-                break;
-            }
-            path.push(next);
-        }
-        let expected_up: Vec<Selection> = expected.iter().rev().copied().collect();
-        assert_eq!(path, expected_up);
-    }
-
-    #[test]
-    fn clamp_section() {
         assert_eq!(
-            Selection::Section(1, 3).clamp(2, 3, 2, 0),
-            Selection::Section(1, 3)
+            walk(Selection::Participant(0), |s| s.down(&d)),
+            expected_walk
+        );
+
+        let last = *expected_walk.last().unwrap();
+        let up: Vec<_> = expected_walk.iter().rev().copied().collect();
+        assert_eq!(walk(last, |s| s.up(&d)), up);
+    }
+
+    #[test]
+    fn horizontal_walk_goes_through_box_and_back() {
+        let d = SequenceDiagram::from_mermaid(BOX_AB_C).unwrap();
+
+        assert_eq!(
+            walk(Selection::None, |s| s.right(&d)),
+            [
+                Selection::None,
+                Selection::Box(0),
+                Selection::Participant(0),
+                Selection::Participant(1),
+                Selection::Participant(2),
+            ]
         );
         assert_eq!(
-            Selection::Section(1, 0).clamp(2, 3, 1, 0),
-            Selection::Participant(0)
+            walk(Selection::Participant(2), |s| s.left(&d)),
+            [
+                Selection::Participant(2),
+                Selection::Participant(1),
+                Selection::Participant(0),
+                Selection::Box(0),
+            ]
         );
     }
 
-    #[test]
-    fn clamp_box() {
-        assert_eq!(Selection::Box(1).clamp(3, 0, 0, 2), Selection::Box(1));
-        assert_eq!(
-            Selection::Box(1).clamp(3, 0, 0, 1),
-            Selection::Participant(0)
-        );
-        assert_eq!(Selection::Box(0).clamp(0, 0, 0, 0), Selection::None);
-    }
+    #[rstest]
+    #[case::success_right_from_free_participant_to_box(
+        Selection::Participant(0),
+        true,
+        Selection::Box(0)
+    )]
+    #[case::success_right_from_box_to_its_member(
+        Selection::Box(0),
+        true,
+        Selection::Participant(1)
+    )]
+    #[case::success_right_from_member_to_next_box(
+        Selection::Participant(1),
+        true,
+        Selection::Box(1)
+    )]
+    #[case::success_left_from_second_box_to_previous_participant(
+        Selection::Box(1),
+        false,
+        Selection::Participant(1)
+    )]
+    #[case::success_left_from_first_box_to_free_participant(
+        Selection::Box(0),
+        false,
+        Selection::Participant(0)
+    )]
+    #[case::success_left_from_member_to_its_box(
+        Selection::Participant(2),
+        false,
+        Selection::Box(1)
+    )]
+    fn box_neighbours_without_leading_box(
+        #[case] given_from: Selection,
+        #[case] given_right: bool,
+        #[case] expected_selection: Selection,
+    ) {
+        let d = SequenceDiagram::from_mermaid(X_BOX_A_BOX_B).unwrap();
 
-    fn boxed(source: &str) -> SequenceDiagram {
-        SequenceDiagram::from_mermaid(source).unwrap()
-    }
+        let next = if given_right {
+            given_from.right(&d)
+        } else {
+            given_from.left(&d)
+        };
 
-    #[test]
-    fn walk_right_and_left_through_box() {
-        let d = boxed(
-            "sequenceDiagram\n    box A\n        participant A\n        participant B\n    end\n    participant C\n",
-        );
-        let mut path = vec![Selection::None];
-        loop {
-            let last = *path.last().unwrap();
-            let next = last.right(&d);
-            if next == last {
-                break;
-            }
-            path.push(next);
-        }
-        let expected = [
-            Selection::None,
-            Selection::Box(0),
-            Selection::Participant(0),
-            Selection::Participant(1),
-            Selection::Participant(2),
-        ];
-        assert_eq!(path, expected);
-
-        let mut back = vec![Selection::Participant(2)];
-        loop {
-            let last = *back.last().unwrap();
-            let next = last.left(&d);
-            if next == last {
-                break;
-            }
-            back.push(next);
-        }
-        let expected_back = [
-            Selection::Participant(2),
-            Selection::Participant(1),
-            Selection::Participant(0),
-            Selection::Box(0),
-        ];
-        assert_eq!(back, expected_back);
-    }
-
-    #[test]
-    fn walk_handles_adjacent_boxes_and_box_not_at_start() {
-        let d = boxed(
-            "sequenceDiagram\n    participant X\n    box\n        participant A\n    end\n    box\n        participant B\n    end\n",
-        );
-        assert_eq!(Selection::Participant(0).right(&d), Selection::Box(0));
-        assert_eq!(Selection::Box(0).right(&d), Selection::Participant(1));
-        assert_eq!(Selection::Participant(1).right(&d), Selection::Box(1));
-        assert_eq!(Selection::Box(1).left(&d), Selection::Participant(1));
-        assert_eq!(Selection::Box(0).left(&d), Selection::Participant(0));
-        assert_eq!(Selection::Participant(2).left(&d), Selection::Box(1));
+        assert_eq!(next, expected_selection);
     }
 
     #[test]
     fn box_goes_down_to_events_and_up_stays() {
-        let d = boxed(
-            "sequenceDiagram\n    box\n        participant A\n    end\n    participant B\n    A->>B: x\n",
-        );
+        let d = SequenceDiagram::from_mermaid(BOX_A_THEN_EVENT).unwrap();
+
         assert_eq!(Selection::Box(0).down(&d), Selection::Event(0));
         assert_eq!(Selection::Box(0).up(&d), Selection::Box(0));
         assert_eq!(Selection::Box(0).left(&d), Selection::Box(0));

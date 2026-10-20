@@ -25,7 +25,7 @@ use tui_world::{InputEvent, KeyBinding, Keybindings, Pointer, WidgetId, World};
 const DEFAULT_FILE: &str = "diagram.mmd";
 const MAX_UNDO_HISTORY: usize = 100;
 const SCROLL_COLUMNS: i16 = 4;
-/// Rows the pointer must travel back before a drag reverses direction.
+/// Cells (rows, or columns for participants/boxes) the pointer must travel back before a drag reverses; a 1-cell nudge therefore isn't undone by returning to the grab cell.
 const DRAG_HYSTERESIS_ROWS: u64 = 2;
 const NOTE_POSITIONS: [(NotePosition, &str); 3] = [
     (NotePosition::Right, "Right of"),
@@ -46,17 +46,14 @@ pub const SELECT_FRAME_KIND: WidgetId = WidgetId("SelectFrameKind");
 const DIAGRAM: WidgetId = WidgetId("Diagram");
 const PICKER: WidgetId = WidgetId("Picker");
 
-/// A left-button press on an item that can turn into a move.
 struct Drag {
     selection_before: Selection,
     origin: Selection,
     moved: bool,
-    /// Doubled pointer position minus the grabbed part's center along the move axis, so the
-    /// item follows the pointer's movement instead of jumping to it.
+    /// Lets the item follow the pointer's movement instead of jumping to it; doubled, centre along the move axis.
     grab: i64,
-    /// A frame is grabbed by its header or its footer.
     footer: bool,
-    /// Direction and pointer target of the last accepted step.
+    /// (towards the end, pointer target) of the last accepted step.
     last_step: Option<(bool, i64)>,
 }
 
@@ -322,8 +319,7 @@ fn start_insert(world: &mut World, mode: EditorMode, before: bool) {
     editor.insert_frame = frame;
 }
 
-/// Inserts at the remembered spot. With a frame selected, `insert_before`
-/// puts the event above the frame instead of inside it.
+/// With a frame selected, `insert_before` puts the event above the frame instead of inside it.
 fn insert_new_event(world: &mut World, editor: &EditorState, event: Event) {
     let diagram = world.get_mut::<SequenceDiagram>();
     let event_idx = match editor.insert_frame {
@@ -333,7 +329,6 @@ fn insert_new_event(world: &mut World, editor: &EditorState, event: Event) {
     world.get_mut::<EditorState>().selection = Selection::Event(event_idx);
 }
 
-/// Lets `k` return to the participant column the selection left from.
 fn remember_participant_column(world: &mut World, selection: Selection) {
     let diagram = world.get::<SequenceDiagram>();
     let column = match selection {
@@ -993,7 +988,6 @@ fn start_section(world: &mut World) {
     }
 }
 
-/// The event a new divider would go above, or why there is none.
 fn section_target(diagram: &SequenceDiagram, selection: Selection) -> Result<usize, String> {
     let idx = match selection {
         Selection::Event(idx) => idx,
@@ -1792,8 +1786,7 @@ fn scroll_wheel(world: &mut World, mouse: MouseEvent) {
     }
 }
 
-/// Both areas start empty and are updated every frame. The picker is registered last
-/// so it sits on top of the diagram.
+/// The picker is registered last so it sits on top of the diagram.
 fn pointer_setup(world: &mut World) {
     let pointer = world.get_mut::<Pointer>();
 
@@ -1834,7 +1827,6 @@ fn click_diagram(world: &mut World, x: u16, y: u16) {
     }
 }
 
-/// Moves the selected item one slot at a time towards the pointer.
 fn drag_diagram(world: &mut World, x: u16, y: u16) {
     if world.get::<EditorState>().mode != EditorMode::Normal
         || world.get::<AppState>().drag.is_none()
@@ -1864,7 +1856,6 @@ fn drag_diagram(world: &mut World, x: u16, y: u16) {
     }
 }
 
-/// Scrolls one event per drag event while the pointer is above or below the events.
 fn autoscroll_drag(world: &mut World, y: u16) {
     let selection = world.get::<EditorState>().selection;
     let scroll = world.get::<ScrollState>();
@@ -1918,7 +1909,7 @@ fn start_drag(world: &mut World, selection_before: Selection, origin: Selection,
     });
 }
 
-/// Doubled position of the pointer cell's center along the selection's move axis.
+/// Doubled, so the centre of a cell along the move axis is odd.
 fn drag_pointer(world: &World, x: u16, y: u16) -> i64 {
     let scroll = world.get::<ScrollState>();
     match world.get::<EditorState>().selection {
@@ -1929,8 +1920,7 @@ fn drag_pointer(world: &World, x: u16, y: u16) -> i64 {
     }
 }
 
-/// The header or footer area of a frame, found by its row next to the frame's first and
-/// last event. None while that part is scrolled out of view.
+/// None while that part of the frame is scrolled out of view.
 fn fragment_part_rect(world: &World, idx: usize, footer: bool) -> Option<Rect> {
     let fragment = world.get::<SequenceDiagram>().fragments.get(idx)?;
     let areas = &world.get::<ScrollState>().hit_areas;
@@ -1952,9 +1942,7 @@ fn fragment_part_rect(world: &World, idx: usize, footer: bool) -> Option<Rect> {
         .map(|(rect, _)| *rect)
 }
 
-/// Doubled center of the selection along its move axis: rows for events, frames and
-/// dividers, canvas columns for participants and boxes. A frame is measured at its
-/// header or, with `footer`, at its footer.
+/// A frame is measured at its header or, with `footer`, at its footer.
 fn drag_center(world: &World, selection: Selection, footer: bool) -> Option<u32> {
     let rect = match selection {
         Selection::Fragment(idx) => fragment_part_rect(world, idx, footer)?,
@@ -1974,8 +1962,7 @@ fn drag_center(world: &World, selection: Selection, footer: bool) -> Option<u32>
     }
 }
 
-/// Moves the selection one slot towards the pointer. Returns false, with nothing changed,
-/// if there is no move or the move would not bring the item closer to the pointer.
+/// Returns false, with nothing changed, if the move would not bring the item closer to the pointer.
 fn drag_step(world: &mut World, x: u16, y: u16) -> bool {
     let Some(drag) = world.get::<AppState>().drag.as_ref() else {
         return false;
@@ -1984,6 +1971,11 @@ fn drag_step(world: &mut World, x: u16, y: u16) -> bool {
 
     let selection = world.get::<EditorState>().selection;
     let target = drag_pointer(world, x, y) - grab;
+    let last_step =
+        last_step.map(|(dir, t)| (dir, if dir { target.max(t) } else { target.min(t) }));
+    if let Some(drag) = world.get_mut::<AppState>().drag.as_mut() {
+        drag.last_step = last_step;
+    }
     let Some(center) = drag_center(world, selection, footer) else {
         return false;
     };
@@ -2041,7 +2033,6 @@ fn release_diagram(world: &mut World, x: u16, y: u16) {
     }
 }
 
-/// Restores the diagram from before the drag and selects the item where it started.
 fn cancel_drag(world: &mut World, drag: &Drag) {
     let committed = world.get::<AppState>().committed.clone();
     *world.get_mut::<SequenceDiagram>() = committed;
@@ -2049,7 +2040,7 @@ fn cancel_drag(world: &mut World, drag: &Drag) {
     world.get_mut::<ScrollState>().follow = true;
 }
 
-/// Moves the cursor of a box or frame end selection; clicking it again confirms.
+/// Clicking the cursor again confirms.
 fn move_end_cursor(world: &mut World, target: Selection) {
     if world.get::<EditorState>().selection == target {
         handle_input_confirm(world);
@@ -2059,7 +2050,6 @@ fn move_end_cursor(world: &mut World, target: Selection) {
     }
 }
 
-/// Chooses and confirms the option in the given row of the open picker.
 fn click_picker(world: &mut World, row: u16) {
     let row = usize::from(row);
     let mode = world.get::<EditorState>().mode.clone();
@@ -2592,8 +2582,28 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{Terminal, backend::TestBackend, crossterm::event::KeyEvent};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        buffer::Buffer,
+        crossterm::event::KeyEvent,
+        style::{Modifier, Style},
+    };
+    use rstest::rstest;
     use std::path::Path;
+
+    const SAMPLE: &str = "sequenceDiagram\n participant A\n participant B\n A->>B: hi\n";
+    const THREE_MESSAGES: &str = "sequenceDiagram\n participant A\n participant B\n A->>B: one\n A->>B: two\n A->>B: three\n";
+    const FRAME_SOURCE: &str = "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: a\nopt x\nA->>B: b\nA->>B: c\nend\nA->>B: d\n";
+    const BOXED_SOURCE: &str = "sequenceDiagram\nbox Blue Frontend\nparticipant A\nparticipant B\nend\nparticipant C\nA->>C: hi\n";
+    const SECTION_SOURCE: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: one\nelse expired\nB->>A: two\nend\n";
+    const THREE_EVENTS_IN_ALT: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: 1\nA->>B: 2\nA->>B: 3\nend\n";
+    const TWO_SECTIONS: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: 1\nA->>B: 2\nelse b\nA->>B: 3\nA->>B: 4\nend\n";
+    const MOUSE_SOURCE: &str = "sequenceDiagram\nbox Blue Team\nparticipant Alice\nparticipant Bob\nend\nAlice->>Bob: three<br>lines<br>here\nBob->>Bob: loopy\nNote over Alice: noted\nloop again\nBob->>Alice: inside\nend\n";
+    const MOUSE_SIZE: (u16, u16) = (60, 40);
+    const DRAG_SIZE: (u16, u16) = (60, 40);
+    const DRAG_SOURCE: &str = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nAlice->>Bob: two\nAlice->>Bob: three\nAlice->>Bob: four\n";
+    const FRAME_DRAG_SOURCE: &str = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
 
     fn world_with(diagram: SequenceDiagram, path: Option<PathBuf>) -> World {
         let mut world = World::default();
@@ -2601,100 +2611,61 @@ mod tests {
         world
     }
 
+    fn world_from(source: &str) -> World {
+        world_with(SequenceDiagram::from_mermaid(source).unwrap(), None)
+    }
+
+    fn world_with_selection(source: &str, selection: Selection) -> World {
+        let mut world = world_from(source);
+        world.get_mut::<EditorState>().selection = selection;
+        world
+    }
+
+    fn sample_world() -> World {
+        world_from(SAMPLE)
+    }
+
+    fn fully_boxed_world() -> World {
+        let mut world = sample_world();
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.add_box(String::new(), BoxColor::Red, 0, 1);
+        world
+    }
+
+    fn fully_framed_world() -> World {
+        let mut world = world_from(THREE_MESSAGES);
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.add_fragment(FragmentKind::Loop, String::new(), 0, 1);
+        diagram.add_fragment(FragmentKind::Opt, String::new(), 2, 2);
+        world
+    }
+
+    fn wide_world(messages: &str) -> World {
+        let names = (1..=8)
+            .map(|i| format!("participant Participant{i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        world_from(&format!("sequenceDiagram\n{names}{messages}"))
+    }
+
+    fn messages(count: usize) -> String {
+        let lines: Vec<String> = (0..count)
+            .map(|i| format!("Alice->>Bob: msg{i:02}\n"))
+            .collect();
+        lines.concat()
+    }
+
+    fn many_messages_world(count: usize) -> World {
+        world_from(&format!(
+            "sequenceDiagram\nparticipant Alice\nparticipant Bob\n{}",
+            messages(count)
+        ))
+    }
+
     fn is_dirty(world: &World) -> bool {
         world
             .get::<AppState>()
             .is_dirty(world.get::<SequenceDiagram>())
-    }
-
-    #[test]
-    fn loaded_diagram_with_comments_is_not_dirty() {
-        let source =
-            "sequenceDiagram\n%% comment\n\n  participant A\n  participant B\n\n  A->>B: hi\n";
-        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-        let world = world_with(diagram, None);
-
-        assert!(!is_dirty(&world));
-    }
-
-    #[test]
-    fn edit_makes_dirty_and_baseline_makes_clean() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-
-        world.get_mut::<SequenceDiagram>().add_participant("A");
-        assert!(is_dirty(&world));
-
-        let mermaid = world.get::<SequenceDiagram>().to_mermaid();
-        world.get_mut::<AppState>().saved_mermaid = mermaid;
-        assert!(!is_dirty(&world));
-    }
-
-    #[test]
-    fn default_path_is_diagram_mmd() {
-        let world = world_with(SequenceDiagram::new(), None);
-
-        assert_eq!(world.get::<AppState>().file_path, Path::new("diagram.mmd"));
-        assert_eq!(world.get::<AppState>().file_name(), "diagram.mmd");
-    }
-
-    #[test]
-    fn clean_quit_exits_immediately() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-
-        request_quit(&mut world);
-
-        assert!(world.get::<AppState>().should_quit);
-    }
-
-    #[test]
-    fn dirty_quit_asks_and_yes_quits() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-        world.get_mut::<SequenceDiagram>().add_participant("A");
-
-        request_quit(&mut world);
-
-        assert!(!world.get::<AppState>().should_quit);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::ConfirmQuit);
-
-        let active = active_widgets(&world);
-        InputEvent::Key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE))
-            .handle(&mut world, &active);
-
-        assert!(world.get::<AppState>().should_quit);
-    }
-
-    #[test]
-    fn dirty_quit_no_cancels() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-        world.get_mut::<SequenceDiagram>().add_participant("A");
-        request_quit(&mut world);
-
-        let active = active_widgets(&world);
-        InputEvent::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
-            .handle(&mut world, &active);
-
-        assert!(!world.get::<AppState>().should_quit);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-    }
-
-    #[test]
-    fn save_writes_file_and_clears_dirty() {
-        let path = std::env::temp_dir().join(format!("tuigram_save_{}.mmd", std::process::id()));
-        let mut world = world_with(SequenceDiagram::new(), Some(path.clone()));
-        world.get_mut::<SequenceDiagram>().add_participant("A");
-        assert!(is_dirty(&world));
-
-        press_char(&mut world, 'S');
-        press(&mut world, KeyCode::Enter);
-
-        let written = fs::read_to_string(&path);
-        let _ = fs::remove_file(&path);
-
-        assert_eq!(
-            written.unwrap(),
-            world.get::<SequenceDiagram>().to_mermaid()
-        );
-        assert!(!is_dirty(&world));
     }
 
     fn press(world: &mut World, code: KeyCode) {
@@ -2710,12 +2681,27 @@ mod tests {
         handle_key(world, KeyEvent::new(KeyCode::Char(c), modifiers));
     }
 
-    fn sample_world() -> World {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\n participant A\n participant B\n A->>B: hi\n",
-        )
-        .unwrap();
-        world_with(diagram, None)
+    fn alt_enter(world: &mut World) {
+        handle_key(world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    }
+
+    /// Presses each character; `\n` is Enter.
+    fn keys(world: &mut World, text: &str) {
+        for c in text.chars() {
+            if c == '\n' {
+                press(world, KeyCode::Enter);
+            } else {
+                press_char(world, c);
+            }
+        }
+    }
+
+    fn add_frame_via_keys(world: &mut World, label: &str) {
+        keys(world, &format!("fj\njj\n{label}\n"));
+    }
+
+    fn insert_message_via_keys(world: &mut World, key: char, text: &str) {
+        keys(world, &format!("{key}\n\n{text}\n"));
     }
 
     fn status(world: &World) -> String {
@@ -2725,226 +2711,183 @@ mod tests {
             .map_or_else(String::new, |s| s.text.clone())
     }
 
-    #[test]
-    fn undo_restores_deleted_event_then_nothing_to_undo() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
+    fn selection(world: &World) -> Selection {
+        world.get::<EditorState>().selection
+    }
 
-        press_char(&mut world, 'D');
-        assert_eq!(world.get::<SequenceDiagram>().event_count(), 0);
+    fn mode(world: &World) -> EditorMode {
+        world.get::<EditorState>().mode.clone()
+    }
 
-        press_char(&mut world, 'u');
-        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
+    fn undo_len(world: &World) -> usize {
+        world.get::<AppState>().undo_stack.len()
+    }
 
-        press_char(&mut world, 'u');
-        assert_eq!(status(&world), "Nothing to undo");
+    fn diagram_of(world: &World) -> String {
+        world.get::<SequenceDiagram>().to_mermaid()
+    }
+
+    fn frames(world: &World) -> Vec<(FragmentKind, String, usize, usize)> {
+        let diagram = world.get::<SequenceDiagram>();
+        let fragments = diagram.fragments.iter();
+        fragments
+            .map(|f| (f.kind, f.label.clone(), f.start, f.end))
+            .collect()
+    }
+
+    fn sections(world: &World) -> Vec<(usize, String)> {
+        world.get::<SequenceDiagram>().fragments[0].sections.clone()
+    }
+
+    fn event_texts(world: &World) -> Vec<String> {
+        let diagram = world.get::<SequenceDiagram>();
+        diagram
+            .events
+            .iter()
+            .map(|e| e.text().to_string())
+            .collect()
+    }
+
+    fn participant_ids(world: &World) -> Vec<String> {
+        let diagram = world.get::<SequenceDiagram>();
+        diagram.participants.iter().map(|p| p.id.clone()).collect()
+    }
+
+    fn box_range(world: &World, idx: usize) -> (usize, usize) {
+        let b = &world.get::<SequenceDiagram>().boxes[idx];
+        (b.start, b.end)
+    }
+
+    fn x_offset(world: &World) -> u16 {
+        world.get::<ScrollState>().x_offset
+    }
+
+    fn draw(world: &mut World, width: u16, height: u16) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render(frame, world)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_rows(buffer: &Buffer) -> Vec<String> {
+        let area = buffer.area;
+        (0..area.height)
+            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    fn render_rows(world: &mut World, width: u16, height: u16) -> Vec<String> {
+        buffer_rows(&draw(world, width, height))
+    }
+
+    fn screen_text(buffer: &Buffer) -> String {
+        buffer_rows(buffer).concat()
+    }
+
+    fn status_line(world: &mut World) -> String {
+        render_rows(world, 100, 24).pop().unwrap()
+    }
+
+    fn rows_containing(rows: &[String], needle: &str) -> Vec<usize> {
+        let matching = rows.iter().enumerate().filter(|(_, r)| r.contains(needle));
+        matching.map(|(i, _)| i).collect()
+    }
+
+    fn col_of(row: &str, needle: &str) -> usize {
+        let byte = row.find(needle).unwrap();
+        row[..byte].chars().count()
+    }
+
+    /// Screen position of the first cell of `text`.
+    fn find(buffer: &Buffer, text: &str) -> (u16, u16) {
+        let width = usize::from(buffer.area.width);
+        let screen = screen_text(buffer);
+        let pos = screen
+            .find(text)
+            .unwrap_or_else(|| panic!("no {text} on screen: {screen}"));
+        let cell = screen[..pos].chars().count();
+        ((cell % width) as u16, (cell / width) as u16)
+    }
+
+    fn style_at(buffer: &Buffer, text: &str) -> Style {
+        let (x, y) = find(buffer, text);
+        buffer[(x, y)].style()
     }
 
     #[test]
-    fn typing_participant_is_one_undo_step() {
-        let mut world = sample_world();
+    fn dirty_follows_changes_against_the_saved_baseline() {
+        let source =
+            "sequenceDiagram\n%% comment\n\n  participant A\n  participant B\n\n  A->>B: hi\n";
+        let mut world = world_from(source);
+        assert!(!is_dirty(&world));
 
-        press_char(&mut world, 'p');
-        press_char(&mut world, 'X');
-        press_char(&mut world, 'Y');
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 3);
-
-        press_char(&mut world, 'u');
-        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 2);
-    }
-
-    #[test]
-    fn t_toggles_actor_and_undo_restores() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
-
-        press_char(&mut world, 't');
-        assert!(world.get::<SequenceDiagram>().participants[0].actor);
-        assert_eq!(status(&world), "Actor");
+        world.get_mut::<SequenceDiagram>().add_participant("C");
         assert!(is_dirty(&world));
 
-        press_char(&mut world, 'u');
-        assert!(!world.get::<SequenceDiagram>().participants[0].actor);
-    }
-
-    #[test]
-    fn t_on_event_does_nothing() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-
-        press_char(&mut world, 't');
-        assert!(
-            world
-                .get::<SequenceDiagram>()
-                .participants
-                .iter()
-                .all(|p| !p.actor)
-        );
+        let mermaid = diagram_of(&world);
+        world.get_mut::<AppState>().saved_mermaid = mermaid;
         assert!(!is_dirty(&world));
     }
 
     #[test]
-    fn redo_with_shift_u_and_ctrl_r() {
+    fn clean_quit_exits_immediately() {
         let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, 'D');
 
-        press_char(&mut world, 'u');
-        press_char(&mut world, 'U');
-        assert_eq!(world.get::<SequenceDiagram>().event_count(), 0);
+        request_quit(&mut world);
 
-        press_char(&mut world, 'u');
-        handle_key(
-            &mut world,
-            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
-        );
-        assert_eq!(world.get::<SequenceDiagram>().event_count(), 0);
-        assert_eq!(status(&world), "Redo");
-
-        press_char(&mut world, 'U');
-        assert_eq!(status(&world), "Nothing to redo");
+        assert!(world.get::<AppState>().should_quit);
     }
 
-    #[test]
-    fn new_change_after_undo_clears_redo() {
+    #[rstest]
+    #[case::success_answer_yes_quits('y', true)]
+    #[case::success_answer_no_stays('n', false)]
+    fn dirty_quit_asks_first(#[case] given_answer: char, #[case] expected_quits: bool) {
         let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, 'D');
-        press_char(&mut world, 'u');
+        world.get_mut::<SequenceDiagram>().add_participant("C");
 
-        world.get_mut::<EditorState>().selection = Selection::Participant(1);
-        press_char(&mut world, 'D');
-        press_char(&mut world, 'U');
+        request_quit(&mut world);
+        assert!(!world.get::<AppState>().should_quit);
+        assert_eq!(mode(&world), EditorMode::ConfirmQuit);
 
-        assert_eq!(status(&world), "Nothing to redo");
-    }
-
-    #[test]
-    fn undo_history_is_capped() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-
-        for _ in 0..105 {
-            press_char(&mut world, 'p');
-            press_char(&mut world, 'A');
-            press(&mut world, KeyCode::Enter);
+        press_char(&mut world, given_answer);
+        assert_eq!(world.get::<AppState>().should_quit, expected_quits);
+        if !expected_quits {
+            assert_eq!(mode(&world), EditorMode::Normal);
         }
-
-        assert_eq!(world.get::<AppState>().undo_stack.len(), MAX_UNDO_HISTORY);
-    }
-
-    #[test]
-    fn undo_restores_selection_from_before_change() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-        press_char(&mut world, 'p');
-        press_char(&mut world, 'A');
-        press(&mut world, KeyCode::Enter);
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
-
-        press_char(&mut world, 'p');
-        press_char(&mut world, 'B');
-        press(&mut world, KeyCode::Enter);
-        world.get_mut::<EditorState>().selection = Selection::Participant(1);
-
-        press_char(&mut world, 'u');
-
-        assert_eq!(
-            world.get::<EditorState>().selection,
-            Selection::Participant(0)
-        );
-    }
-
-    #[test]
-    fn undo_cleans_dirty_marker() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-
-        press_char(&mut world, 'D');
-        assert!(is_dirty(&world));
-
-        press_char(&mut world, 'u');
-        assert!(!is_dirty(&world));
-    }
-
-    #[test]
-    fn undo_restores_cleared_diagram() {
-        let mut world = sample_world();
-
-        press_char(&mut world, 'C');
-        press_char(&mut world, 'y');
-        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 0);
-
-        press_char(&mut world, 'u');
-        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 2);
-        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
     }
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("tuigram-test-{}-{name}", std::process::id()))
     }
 
-    fn type_text(world: &mut World, text: &str) {
-        for c in text.chars() {
-            press_char(world, c);
-        }
-    }
-
-    #[test]
-    fn y_sets_pending_clipboard_and_status() {
-        let mut world = sample_world();
-
-        press_char(&mut world, 'y');
-
-        let expected = world.get::<SequenceDiagram>().to_mermaid();
-        let lines = expected.lines().count();
-        assert_eq!(
-            world.get::<AppState>().pending_clipboard.as_deref(),
-            Some(expected.as_str())
-        );
-        assert_eq!(status(&world), format!("Copied {lines} lines"));
-    }
-
-    #[test]
-    fn capital_s_opens_prompt_prefilled_with_path() {
-        let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("a/b.mmd")));
-
-        press_char(&mut world, 'S');
-
-        let editor = world.get::<EditorState>();
-        assert_eq!(editor.mode, EditorMode::InputSavePath);
-        assert_eq!(editor.input_buffer, "a/b.mmd");
-    }
-
     #[test]
     fn save_as_writes_updates_path_and_later_save_uses_it() {
         let path = temp_path("save-as.mmd");
         let mut world = sample_world();
+        world.get_mut::<SequenceDiagram>().add_participant("C");
 
         press_char(&mut world, 'S');
         for _ in 0..world.get::<EditorState>().input_buffer.len() {
             press(&mut world, KeyCode::Backspace);
         }
-        type_text(&mut world, path.to_str().unwrap());
-        press(&mut world, KeyCode::Enter);
+        keys(&mut world, &format!("{}\n", path.to_str().unwrap()));
 
         let written = fs::read_to_string(&path);
-        let mermaid = world.get::<SequenceDiagram>().to_mermaid();
+        let mermaid = diagram_of(&world);
         assert_eq!(world.get::<AppState>().file_path, path);
         assert!(!is_dirty(&world));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(mode(&world), EditorMode::Normal);
 
-        world.get_mut::<SequenceDiagram>().add_participant("C");
-        press_char(&mut world, 'S');
-        press(&mut world, KeyCode::Enter);
+        world.get_mut::<SequenceDiagram>().add_participant("D");
+        keys(&mut world, "S\n");
         let saved = fs::read_to_string(&path);
         let _ = fs::remove_file(&path);
 
         assert_eq!(written.unwrap(), mermaid);
-        assert!(saved.unwrap().contains("participant C"));
+        assert!(saved.unwrap().contains("participant D"));
     }
 
     #[test]
-    fn save_as_to_missing_dir_is_error_and_keeps_path() {
+    fn save_to_missing_dir_is_an_error_and_keeps_path() {
         let path = temp_path("missing-dir").join("nested").join("x.mmd");
         let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("keep.mmd")));
         world.get_mut::<EditorState>().mode = EditorMode::InputSavePath;
@@ -2960,14 +2903,16 @@ mod tests {
     }
 
     #[test]
-    fn save_as_escape_cancels() {
-        let mut world = sample_world();
+    fn save_prompt_is_prefilled_and_escape_cancels() {
+        let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("a/b.mmd")));
 
         press_char(&mut world, 'S');
-        press(&mut world, KeyCode::Esc);
+        assert_eq!(mode(&world), EditorMode::InputSavePath);
+        assert_eq!(world.get::<EditorState>().input_buffer, "a/b.mmd");
 
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(world.get::<AppState>().file_path, Path::new("diagram.mmd"));
+        press(&mut world, KeyCode::Esc);
+        assert_eq!(mode(&world), EditorMode::Normal);
+        assert_eq!(world.get::<AppState>().file_path, Path::new("a/b.mmd"));
     }
 
     #[test]
@@ -2985,84 +2930,248 @@ mod tests {
     }
 
     #[test]
-    fn help_closes_on_any_key_without_side_effects() {
+    fn y_copies_the_diagram_source() {
         let mut world = sample_world();
 
-        press_char(&mut world, '?');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Help);
-        press_char(&mut world, 'p');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        press_char(&mut world, 'y');
 
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, '?');
-        press_char(&mut world, 'D');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
-
-        press_char(&mut world, '?');
-        press_char(&mut world, '?');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-
-        press_char(&mut world, '?');
-        handle_key(
-            &mut world,
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        let expected = diagram_of(&world);
+        let lines = expected.lines().count();
+        assert_eq!(
+            world.get::<AppState>().pending_clipboard.as_deref(),
+            Some(expected.as_str())
         );
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert!(!world.get::<AppState>().should_quit);
+        assert_eq!(status(&world), format!("Copied {lines} lines"));
     }
 
     #[test]
-    fn overlapping_box_stays_in_end_mode() {
-        let mut world = sample_world_with_box();
-        world.get_mut::<EditorState>().selection = Selection::Participant(2);
+    fn undo_restores_deleted_event_and_reports_nothing_left() {
+        let mut world = world_with_selection(SAMPLE, Selection::Event(0));
 
-        press_char(&mut world, 'b');
-        press_char(&mut world, 'h');
-        press(&mut world, KeyCode::Enter);
+        press_char(&mut world, 'D');
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 0);
+        assert!(is_dirty(&world));
 
-        assert!(world.get::<EditorState>().get_status().is_none());
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
-        assert_eq!(world.get::<EditorState>().box_start, Some(2));
-        assert_eq!(selection(&world), Selection::Participant(1));
+        press_char(&mut world, 'u');
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
+        assert!(!is_dirty(&world));
 
-        press_char(&mut world, 'l');
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+        press_char(&mut world, 'u');
+        assert_eq!(status(&world), "Nothing to undo");
     }
 
-    fn framed_world() -> World {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\n participant A\n participant B\n A->>B: one\n A->>B: two\n A->>B: three\n",
-        )
-        .unwrap();
-        world_with(diagram, None)
+    #[test]
+    fn redo_with_shift_u_and_ctrl_r_and_new_change_clears_it() {
+        let mut world = world_with_selection(SAMPLE, Selection::Event(0));
+        keys(&mut world, "DuU");
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 0);
+
+        press_char(&mut world, 'u');
+        let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        handle_key(&mut world, ctrl_r);
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 0);
+        assert_eq!(status(&world), "Redo");
+
+        press_char(&mut world, 'U');
+        assert_eq!(status(&world), "Nothing to redo");
+
+        press_char(&mut world, 'u');
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+        keys(&mut world, "DU");
+        assert_eq!(status(&world), "Nothing to redo");
     }
 
-    fn frames(world: &World) -> Vec<(FragmentKind, String, usize, usize)> {
-        world
-            .get::<SequenceDiagram>()
-            .fragments
-            .iter()
-            .map(|f| (f.kind, f.label.clone(), f.start, f.end))
-            .collect()
+    #[test]
+    fn undo_history_is_capped() {
+        let mut world = world_with(SequenceDiagram::new(), None);
+
+        for _ in 0..=MAX_UNDO_HISTORY {
+            keys(&mut world, "pA\n");
+        }
+
+        assert_eq!(undo_len(&world), MAX_UNDO_HISTORY);
     }
 
-    fn add_frame_via_keys(world: &mut World, label: &str) {
-        press_char(world, 'f');
-        press_char(world, 'j');
-        press(world, KeyCode::Enter);
-        press_char(world, 'j');
-        press_char(world, 'j');
-        press(world, KeyCode::Enter);
-        type_text(world, label);
-        press(world, KeyCode::Enter);
+    #[test]
+    fn undo_reverts_one_typed_participant_and_restores_selection() {
+        let mut world = world_with(SequenceDiagram::new(), None);
+        keys(&mut world, "pA\n");
+        world.get_mut::<EditorState>().selection = Selection::Participant(0);
+        keys(&mut world, "pB\n");
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+
+        press_char(&mut world, 'u');
+
+        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 1);
+        assert_eq!(selection(&world), Selection::Participant(0));
+    }
+
+    #[test]
+    fn clear_resets_selection_and_undo_restores_the_diagram() {
+        let mut world = sample_world();
+
+        keys(&mut world, "GCy");
+        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 0);
+        assert_eq!(selection(&world), Selection::None);
+
+        press_char(&mut world, 'u');
+        assert_eq!(world.get::<SequenceDiagram>().participant_count(), 2);
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
+    }
+
+    #[test]
+    fn undo_returns_cursor_to_moved_events_original_position() {
+        let source = "sequenceDiagram\nA->>B: 0\nA->>B: 1\nA->>B: 2\n";
+        let mut world = world_with_selection(source, Selection::Event(0));
+
+        keys(&mut world, "Jj");
+        assert_eq!(selection(&world), Selection::Event(2));
+        press_char(&mut world, 'u');
+
+        assert_eq!(event_texts(&world), ["0", "1", "2"]);
+        assert_eq!(selection(&world), Selection::Event(0));
+
+        press_char(&mut world, 'U');
+        assert_eq!(event_texts(&world), ["1", "0", "2"]);
+        assert_eq!(selection(&world), Selection::Event(2));
+    }
+
+    #[test]
+    fn t_toggles_actor_and_undo_restores() {
+        let mut world = world_with_selection(SAMPLE, Selection::Participant(0));
+
+        press_char(&mut world, 't');
+        assert!(world.get::<SequenceDiagram>().participants[0].actor);
+        assert_eq!(status(&world), "Actor");
+        assert!(is_dirty(&world));
+
+        press_char(&mut world, 'u');
+        assert!(!world.get::<SequenceDiagram>().participants[0].actor);
+    }
+
+    #[rstest]
+    #[case::failure_event_ignores_t(Selection::Event(0), 't')]
+    #[case::failure_event_ignores_plus(Selection::Event(0), '+')]
+    #[case::failure_event_ignores_minus(Selection::Event(0), '-')]
+    #[case::failure_frame_ignores_capital_h(Selection::Fragment(0), 'H')]
+    #[case::failure_frame_ignores_capital_l(Selection::Fragment(0), 'L')]
+    #[case::failure_frame_ignores_a(Selection::Fragment(0), 'a')]
+    #[case::failure_frame_ignores_capital_a(Selection::Fragment(0), 'A')]
+    #[case::failure_frame_ignores_t(Selection::Fragment(0), 't')]
+    fn key_does_nothing_for_this_selection(
+        #[case] given_selected: Selection,
+        #[case] given_key: char,
+    ) {
+        let mut world = world_with_selection(FRAME_SOURCE, given_selected);
+        let before = world.get::<SequenceDiagram>().clone();
+
+        press_char(&mut world, given_key);
+
+        assert!(*world.get::<SequenceDiagram>() == before);
+        assert!(!is_dirty(&world));
+        assert_eq!(selection(&world), given_selected);
+    }
+
+    #[test]
+    fn hash_toggles_autonumber_and_undo_restores() {
+        let mut world = sample_world();
+
+        // Some terminals report symbol keys with SHIFT set.
+        let shifted = KeyEvent::new(KeyCode::Char('#'), KeyModifiers::SHIFT);
+        handle_key(&mut world, shifted);
+        assert!(world.get::<SequenceDiagram>().autonumber);
+        assert_eq!(status(&world), "Autonumber on");
+
+        press_char(&mut world, '#');
+        assert!(!world.get::<SequenceDiagram>().autonumber);
+        assert_eq!(status(&world), "Autonumber off");
+
+        press_char(&mut world, 'u');
+        assert!(world.get::<SequenceDiagram>().autonumber);
+        press_char(&mut world, 'u');
+        assert!(!is_dirty(&world));
+    }
+
+    #[test]
+    fn help_closes_on_any_key_without_side_effects() {
+        let mut world = world_with_selection(SAMPLE, Selection::Event(0));
+        let shifted = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT);
+        handle_key(&mut world, shifted);
+        assert_eq!(mode(&world), EditorMode::Help);
+        press_char(&mut world, 'x');
+
+        keys(&mut world, "?D");
+        assert_eq!(mode(&world), EditorMode::Normal);
+        assert_eq!(world.get::<SequenceDiagram>().event_count(), 1);
+
+        keys(&mut world, "??");
+        assert_eq!(mode(&world), EditorMode::Normal);
+
+        press_char(&mut world, '?');
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        handle_key(&mut world, ctrl_c);
+        assert_eq!(mode(&world), EditorMode::Normal);
+        assert!(!world.get::<AppState>().should_quit);
+    }
+
+    #[rstest]
+    #[case::success_message_input_breaks_line(EditorMode::InputMessage, "a<br/>b")]
+    #[case::failure_participant_input_ignores_alt_enter(EditorMode::InputParticipant, "ab")]
+    #[case::failure_save_path_input_ignores_alt_enter(EditorMode::InputSavePath, "ab")]
+    fn alt_enter_breaks_lines_only_in_message_input(
+        #[case] given_input_mode: EditorMode,
+        #[case] expected_input_buffer: &str,
+    ) {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().mode = given_input_mode;
+
+        keys(&mut world, "a");
+        alt_enter(&mut world);
+        keys(&mut world, "b");
+
+        assert_eq!(
+            world.get::<EditorState>().input_buffer,
+            expected_input_buffer
+        );
+    }
+
+    #[test]
+    fn g_and_shift_g_jump_to_first_and_last_event() {
+        let mut world = world_from(THREE_MESSAGES);
+
+        press_char(&mut world, 'G');
+        assert_eq!(selection(&world), Selection::Event(2));
+
+        press_char(&mut world, 'g');
+        assert_eq!(selection(&world), Selection::Event(0));
+    }
+
+    #[test]
+    fn g_selects_frame_header_when_first_event_starts_a_frame() {
+        let source =
+            "sequenceDiagram\nparticipant A\nparticipant B\nloop\nA->>B: a\nend\nA->>B: b\n";
+        let mut world = world_with_selection(source, Selection::Event(1));
+
+        press_char(&mut world, 'g');
+
+        assert_eq!(selection(&world), Selection::Fragment(0));
+    }
+
+    #[test]
+    fn g_and_shift_g_do_nothing_without_events() {
+        let mut world = world_with_selection(
+            "sequenceDiagram\nparticipant A\n",
+            Selection::Participant(0),
+        );
+
+        keys(&mut world, "gG");
+
+        assert_eq!(selection(&world), Selection::Participant(0));
     }
 
     #[test]
     fn f_creates_frame_and_undo_removes_it() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
 
         add_frame_via_keys(&mut world, "Retry");
 
@@ -3070,8 +3179,8 @@ mod tests {
             frames(&world),
             vec![(FragmentKind::Opt, "Retry".to_string(), 0, 1)]
         );
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(world.get::<EditorState>().selection, Selection::Event(0));
+        assert_eq!(mode(&world), EditorMode::Normal);
+        assert_eq!(selection(&world), Selection::Event(0));
 
         press_char(&mut world, 'u');
         assert_eq!(frames(&world).len(), 0);
@@ -3079,18 +3188,15 @@ mod tests {
 
     #[test]
     fn f_on_framed_event_edits_kind_and_label() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
         add_frame_via_keys(&mut world, "Retry");
 
         press_char(&mut world, 'f');
         assert_eq!(world.get::<EditorState>().frame_kind, FragmentKind::Opt);
-        press_char(&mut world, 'k');
-        press(&mut world, KeyCode::Enter);
+        keys(&mut world, "k\n");
         assert_eq!(world.get::<EditorState>().input_buffer, "Retry");
         press(&mut world, KeyCode::Backspace);
-        press_char(&mut world, 'X');
-        press(&mut world, KeyCode::Enter);
+        keys(&mut world, "X\n");
 
         assert_eq!(
             frames(&world),
@@ -3100,8 +3206,7 @@ mod tests {
 
     #[test]
     fn capital_f_removes_frame_or_reports_none() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(2);
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(2));
         press_char(&mut world, 'F');
         assert_eq!(status(&world), "No frame here");
 
@@ -3112,49 +3217,178 @@ mod tests {
     }
 
     #[test]
-    fn f_over_existing_frame_is_an_error() {
-        let mut world = framed_world();
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_fragment(FragmentKind::Loop, String::new(), 1, 1);
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
+    fn confirming_a_frame_range_over_an_existing_frame_is_refused() {
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.add_fragment(FragmentKind::Loop, String::new(), 1, 1);
 
-        press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Enter);
+        keys(&mut world, "fj\n");
 
         assert!(world.get::<EditorState>().get_status().is_none());
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameEnd);
+        assert_eq!(mode(&world), EditorMode::SelectFrameEnd);
         assert_eq!(world.get::<EditorState>().frame_start, Some(0));
         assert_eq!(selection(&world), Selection::Event(1));
         assert_eq!(frames(&world).len(), 1);
 
-        press_char(&mut world, 'k');
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
+        keys(&mut world, "k\n");
+        assert_eq!(mode(&world), EditorMode::SelectFrameKind);
     }
 
     #[test]
-    fn f_escape_cancels_and_restores_selection() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
+    fn confirming_a_box_range_over_an_existing_box_is_refused() {
+        let mut world = world_with_selection(BOXED_SOURCE, Selection::Participant(2));
+
+        keys(&mut world, "bh");
+        let buffer = draw(&mut world, 100, 24);
+        assert_eq!(style_at(&buffer, "C").fg, world.get::<Theme>().accent.fg);
+
+        press(&mut world, KeyCode::Enter);
+
+        assert!(world.get::<EditorState>().get_status().is_none());
+        assert_eq!(mode(&world), EditorMode::SelectBoxEnd);
+        assert_eq!(world.get::<EditorState>().box_start, Some(2));
+        assert_eq!(selection(&world), Selection::Participant(1));
+
+        keys(&mut world, "l\n");
+        assert_eq!(mode(&world), EditorMode::SelectBoxColor);
+    }
+
+    #[rstest]
+    #[case::success_no_selection_starts_at_first_event(Selection::None, None, 0)]
+    #[case::success_participant_selection_starts_at_first_event(Selection::Participant(1), None, 0)]
+    #[case::success_event_selection_starts_at_event(Selection::Event(1), None, 1)]
+    #[case::success_framed_events_start_at_first_free_event(Selection::None, Some((0, 1)), 2)]
+    fn f_starts_at_selected_or_first_free_event(
+        #[case] given_selected: Selection,
+        #[case] given_frame: Option<(usize, usize)>,
+        #[case] expected_start: usize,
+    ) {
+        let mut world = world_with_selection(THREE_MESSAGES, given_selected);
+        if let Some((first, last)) = given_frame {
+            let diagram = world.get_mut::<SequenceDiagram>();
+            diagram.add_fragment(FragmentKind::Loop, String::new(), first, last);
+        }
 
         press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
+
+        assert_eq!(mode(&world), EditorMode::SelectFrameEnd);
+        assert_eq!(world.get::<EditorState>().frame_start, Some(expected_start));
+        assert_eq!(selection(&world), Selection::Event(expected_start));
+    }
+
+    #[rstest]
+    #[case::success_participant_selection_starts_there(SAMPLE, Selection::Participant(1), 1)]
+    #[case::success_no_selection_starts_at_first_participant(SAMPLE, Selection::None, 0)]
+    #[case::success_event_selection_starts_at_first_participant(SAMPLE, Selection::Event(0), 0)]
+    #[case::success_boxed_participants_start_at_first_free(BOXED_SOURCE, Selection::None, 2)]
+    fn b_starts_at_selected_or_first_free_participant(
+        #[case] given_source: &str,
+        #[case] given_selected: Selection,
+        #[case] expected_start: usize,
+    ) {
+        let mut world = world_with_selection(given_source, given_selected);
+
+        press_char(&mut world, 'b');
+
+        assert_eq!(mode(&world), EditorMode::SelectBoxEnd);
+        assert_eq!(world.get::<EditorState>().box_start, Some(expected_start));
+        assert_eq!(selection(&world), Selection::Participant(expected_start));
+    }
+
+    #[rstest]
+    #[case::failure_frame_without_messages(
+        'f',
+        world_from("sequenceDiagram\n participant A\n"),
+        "Add a message first (m)"
+    )]
+    #[case::failure_box_without_participants(
+        'b',
+        world_from("sequenceDiagram\n"),
+        "Add a participant first (p)"
+    )]
+    #[case::failure_frame_all_messages_framed(
+        'f',
+        fully_framed_world(),
+        "No free messages to frame"
+    )]
+    #[case::failure_box_all_participants_boxed(
+        'b',
+        fully_boxed_world(),
+        "No free participants to box"
+    )]
+    fn f_and_b_report_when_nothing_can_start(
+        #[case] given_key: char,
+        #[case] mut given_world: World,
+        #[case] expected_message: &str,
+    ) {
+        given_world.get_mut::<EditorState>().selection = Selection::None;
+
+        press_char(&mut given_world, given_key);
+
+        assert_eq!(mode(&given_world), EditorMode::Normal);
+        assert_eq!(status(&given_world), expected_message);
+    }
+
+    #[test]
+    fn b_on_box_or_member_edits_that_box() {
+        let mut world = world_with_selection(BOXED_SOURCE, Selection::Box(0));
+        press_char(&mut world, 'b');
+        assert_eq!(mode(&world), EditorMode::SelectBoxColor);
+        assert_eq!(world.get::<EditorState>().box_start, None);
         press(&mut world, KeyCode::Esc);
 
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(world.get::<EditorState>().selection, Selection::Event(0));
-        assert_eq!(frames(&world).len(), 0);
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+        press_char(&mut world, 'b');
+        assert_eq!(mode(&world), EditorMode::SelectBoxColor);
+        assert_eq!(selection(&world), Selection::Box(0));
+    }
+
+    #[test]
+    fn box_end_moves_only_with_h_and_l() {
+        let mut world = world_with_selection(SAMPLE, Selection::Participant(0));
+        press_char(&mut world, 'b');
+
+        press_char(&mut world, 'j');
+        press(&mut world, KeyCode::Down);
+        assert_eq!(selection(&world), Selection::Participant(0));
+
+        press_char(&mut world, 'l');
+        press_char(&mut world, 'l');
+        assert_eq!(selection(&world), Selection::Participant(1));
+        press(&mut world, KeyCode::Left);
+        assert_eq!(selection(&world), Selection::Participant(0));
+    }
+
+    #[test]
+    fn escape_at_every_create_step_restores_selection() {
+        for steps in 0..3 {
+            let mut world = world_with_selection(THREE_MESSAGES, Selection::Participant(1));
+            press_char(&mut world, 'f');
+            for _ in 0..steps {
+                press(&mut world, KeyCode::Enter);
+            }
+            press(&mut world, KeyCode::Esc);
+            assert_eq!(mode(&world), EditorMode::Normal);
+            assert_eq!(selection(&world), Selection::Participant(1));
+            assert_eq!(frames(&world).len(), 0);
+
+            world.get_mut::<EditorState>().selection = Selection::Event(2);
+            keys(&mut world, "bl");
+            for _ in 0..steps {
+                press(&mut world, KeyCode::Enter);
+            }
+            press(&mut world, KeyCode::Esc);
+            assert_eq!(mode(&world), EditorMode::Normal);
+            assert_eq!(selection(&world), Selection::Event(2));
+            assert_eq!(world.get::<SequenceDiagram>().boxes.len(), 0);
+        }
     }
 
     #[test]
     fn shift_j_on_last_framed_event_leaves_frame() {
-        let mut world = framed_world();
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_fragment(FragmentKind::Loop, String::new(), 0, 1);
-        world.get_mut::<EditorState>().selection = Selection::Event(1);
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(1));
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.add_fragment(FragmentKind::Loop, String::new(), 0, 1);
 
         press_char(&mut world, 'J');
 
@@ -3162,7 +3396,7 @@ mod tests {
             frames(&world),
             vec![(FragmentKind::Loop, String::new(), 0, 0)]
         );
-        assert_eq!(world.get::<EditorState>().selection, Selection::Event(1));
+        assert_eq!(selection(&world), Selection::Event(1));
 
         world.get_mut::<EditorState>().selection = Selection::Event(0);
         press_char(&mut world, 'K');
@@ -3171,174 +3405,819 @@ mod tests {
     }
 
     #[test]
-    fn frame_is_drawn_with_header_and_footer() {
-        let mut world = framed_world();
-        world.get_mut::<SequenceDiagram>().add_fragment(
-            FragmentKind::Loop,
-            "Every minute".to_string(),
-            0,
-            1,
+    fn shift_j_and_k_move_selected_frame_and_selection_follows() {
+        let mut world = world_with_selection(FRAME_SOURCE, Selection::Fragment(0));
+
+        press_char(&mut world, 'J');
+        assert_eq!(event_texts(&world), ["a", "d", "b", "c"]);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+        assert_eq!(frames(&world)[0].2, 2);
+
+        press_char(&mut world, 'K');
+        assert_eq!(event_texts(&world), ["a", "b", "c", "d"]);
+        press_char(&mut world, 'K');
+        assert_eq!(event_texts(&world), ["b", "c", "a", "d"]);
+        press_char(&mut world, 'K');
+        assert_eq!(event_texts(&world), ["b", "c", "a", "d"]);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+    }
+
+    #[rstest]
+    #[case::success_d_removes_frame('D', "Frame removed")]
+    #[case::success_capital_f_removes_frame('F', "Frame removed")]
+    fn d_and_capital_f_on_frame_remove_only_the_frame(
+        #[case] given_key: char,
+        #[case] expected_message: &str,
+    ) {
+        let mut world = world_with_selection(FRAME_SOURCE, Selection::Fragment(0));
+
+        press_char(&mut world, given_key);
+
+        assert_eq!(frames(&world).len(), 0);
+        assert_eq!(event_texts(&world).len(), 4);
+        assert_eq!(selection(&world), Selection::Event(1));
+        assert_eq!(status(&world), expected_message);
+    }
+
+    #[test]
+    fn enter_on_frame_edits_kind_and_label_and_undo_reverts_both() {
+        let mut world = world_with_selection(FRAME_SOURCE, Selection::Fragment(0));
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().frame_kind, FragmentKind::Opt);
+        press(&mut world, KeyCode::Down);
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().input_buffer, "x");
+        keys(&mut world, "y\n");
+
+        let edited = frames(&world);
+        assert_eq!(edited[0].1, "xy");
+        assert_ne!(edited[0].0, FragmentKind::Opt);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+
+        press_char(&mut world, 'u');
+        assert_eq!(frames(&world)[0].0, FragmentKind::Opt);
+        assert_eq!(frames(&world)[0].1, "x");
+        assert_eq!(selection(&world), Selection::Fragment(0));
+    }
+
+    #[rstest]
+    #[case::success_m_inserts_inside_frame('m', "in", ["a", "in", "b", "c", "d"], (1, 3))]
+    #[case::success_capital_m_inserts_above_frame('M', "out", ["a", "out", "b", "c", "d"], (2, 3))]
+    fn m_on_frame_inserts_inside_and_capital_m_above(
+        #[case] given_key: char,
+        #[case] given_text: &str,
+        #[case] expected_texts: [&str; 5],
+        #[case] expected_range: (usize, usize),
+    ) {
+        let mut world = world_with_selection(FRAME_SOURCE, Selection::Fragment(0));
+
+        insert_message_via_keys(&mut world, given_key, given_text);
+
+        assert_eq!(event_texts(&world), expected_texts);
+        assert_eq!((frames(&world)[0].2, frames(&world)[0].3), expected_range);
+        assert_eq!(selection(&world), Selection::Event(1));
+    }
+
+    #[test]
+    fn undo_of_frame_swap_keeps_selection_on_same_frame() {
+        let source = "sequenceDiagram\nA->>B: 0\nopt a\nA->>B: 1\nend\nloop b\nA->>B: 2\nend\n";
+        let mut world = world_with_selection(source, Selection::Fragment(0));
+
+        press_char(&mut world, 'J');
+        assert_eq!(selection(&world), Selection::Fragment(1));
+        press_char(&mut world, 'u');
+
+        assert_eq!(selection(&world), Selection::Fragment(0));
+        assert_eq!(frames(&world)[0].1, "a");
+    }
+
+    #[test]
+    fn undo_of_frame_creation_selects_its_first_event_in_view() {
+        let messages = "A->>B: m\n".repeat(20);
+        let source =
+            format!("sequenceDiagram\nparticipant A\nparticipant B\n{messages}A->>B: last\n");
+        let mut world = world_with_selection(&source, Selection::Event(20));
+        add_frame_via_keys(&mut world, "");
+        press_char(&mut world, 'k');
+        assert_eq!(selection(&world), Selection::Fragment(0));
+
+        press_char(&mut world, 'u');
+
+        assert_eq!(selection(&world), Selection::Event(20));
+        let rows = render_rows(&mut world, 60, 16);
+        assert!(rows.iter().any(|r| r.contains("last")));
+    }
+
+    #[test]
+    fn selecting_frame_below_viewport_scrolls_it_into_view() {
+        let messages = "A->>B: m\n".repeat(12);
+        let source = format!(
+            "sequenceDiagram\nparticipant A\nparticipant B\n{messages}opt late\nA->>B: framed\nend\n"
         );
+        let mut world = world_with_selection(&source, Selection::Fragment(0));
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
+        let rows = render_rows(&mut world, 60, 16);
 
-        let buffer = terminal.backend().buffer();
-        let screen: String = buffer
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect();
-        assert!(screen.contains("┌ loop [Every minute]"));
-        assert!(screen.contains('└'));
+        assert!(rows.iter().any(|r| r.contains("framed")));
+        assert!(world.get::<ScrollState>().offset > 0);
+    }
+
+    #[test]
+    fn frame_preview_grows_with_the_cursor_and_vanishes_on_escape() {
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
+        let undo_before = undo_len(&world);
+        let diagram_before = diagram_of(&world);
+        let footer = |rows: &[String]| rows_containing(rows, "└┄")[0];
+
+        press_char(&mut world, 'f');
+        let one = render_rows(&mut world, 80, 24);
+        press_char(&mut world, 'j');
+        let two = render_rows(&mut world, 80, 24);
+
+        let screen = two.concat();
+        assert!(screen.contains("┌ new frame"), "{screen}");
+        assert!(screen.contains("┄┘"));
+        assert!(footer(&two) > footer(&one));
+        assert_eq!(frames(&world).len(), 0);
+
+        press(&mut world, KeyCode::Esc);
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(!screen.contains("new frame"));
+        assert!(!screen.contains("└┄"));
+        assert_eq!(diagram_of(&world), diagram_before);
+        assert!(!is_dirty(&world));
+        assert_eq!(undo_len(&world), undo_before);
+    }
+
+    #[test]
+    fn frame_preview_over_existing_frame_is_red_with_hint() {
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.add_fragment(FragmentKind::Loop, "Mark".to_string(), 1, 1);
+        press_char(&mut world, 'f');
+
+        let ok = draw(&mut world, 100, 24);
+        assert_eq!(style_at(&ok, "M").fg, world.get::<Theme>().accent.fg);
+        assert!(!status_line(&mut world).contains("overlaps a frame"));
+
+        press_char(&mut world, 'j');
+        let buffer = draw(&mut world, 100, 24);
+
+        assert_eq!(style_at(&buffer, "M").fg, world.get::<Theme>().error.fg);
+        assert!(!screen_text(&buffer).contains("new frame"));
+        assert!(status_line(&mut world).contains("overlaps a frame"));
+    }
+
+    #[test]
+    fn frame_preview_follows_picker_kind_and_label() {
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
+        keys(&mut world, "fj\n");
+
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("┌ loop"), "{screen}");
+        press_char(&mut world, 'k');
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("┌ break"), "{screen}");
+
+        keys(&mut world, "\nWhy");
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("break [Why]"), "{screen}");
+    }
+
+    #[rstest]
+    #[case::success_frame_last_message_hint(
+        "f",
+        "j/k: choose last message  Enter: pick kind  Esc: cancel"
+    )]
+    #[case::success_frame_kind_hint("f\n", "j/k: kind  Enter: next (label)  Esc: cancel")]
+    #[case::success_frame_label_hint("f\n\n", "Label (optional, Enter to finish):")]
+    #[case::success_box_last_participant_hint(
+        "b",
+        "h/l: choose last participant  Enter: pick color  Esc: cancel"
+    )]
+    fn create_modes_show_their_hints(#[case] given_pressed: &str, #[case] expected_hint: &str) {
+        let mut world = world_with_selection(THREE_MESSAGES, Selection::Event(0));
+
+        keys(&mut world, given_pressed);
+
+        let screen = screen_text(&draw(&mut world, 100, 24));
+        assert!(screen.contains(expected_hint), "{screen}");
+    }
+
+    const BOX_SOURCE: &str = "sequenceDiagram\n    box Blue Frontend\n        participant A\n        participant B\n    end\n    participant C\n";
+
+    #[test]
+    fn shift_l_and_h_move_box_and_selection_follows() {
+        let mut world = world_with_selection(BOX_SOURCE, Selection::Box(0));
+
+        press_char(&mut world, 'L');
+        assert_eq!(participant_ids(&world), ["C", "A", "B"]);
+        assert_eq!(box_range(&world, 0), (1, 2));
+        assert_eq!(selection(&world), Selection::Box(0));
+
+        press_char(&mut world, 'L');
+        assert_eq!(box_range(&world, 0), (1, 2));
+
+        press_char(&mut world, 'H');
+        assert_eq!(participant_ids(&world), ["A", "B", "C"]);
+        assert_eq!(box_range(&world, 0), (0, 1));
+
+        press_char(&mut world, 'H');
+        assert_eq!(box_range(&world, 0), (0, 1));
+
+        press_char(&mut world, 'L');
+        press_char(&mut world, 'u');
+        assert_eq!(participant_ids(&world), ["A", "B", "C"]);
+        assert_eq!(selection(&world), Selection::Box(0));
+    }
+
+    #[rstest]
+    #[case::success_d_removes_box('D')]
+    #[case::success_b_removes_box('B')]
+    fn d_and_b_on_box_remove_only_the_box(#[case] given_key: char) {
+        let mut world = world_with_selection(BOX_SOURCE, Selection::Box(0));
+
+        press_char(&mut world, given_key);
+
+        assert_eq!(world.get::<SequenceDiagram>().boxes.len(), 0);
+        assert_eq!(participant_ids(&world), ["A", "B", "C"]);
+        assert_eq!(selection(&world), Selection::Participant(0));
+        assert_eq!(status(&world), "Box removed");
+    }
+
+    #[test]
+    fn enter_on_colored_box_edits_color_then_label() {
+        let mut world = world_with_selection(BOX_SOURCE, Selection::Box(0));
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(mode(&world), EditorMode::SelectBoxColor);
+        assert_eq!(world.get::<EditorState>().box_color, BoxColor::Blue);
+
+        keys(&mut world, "j\n");
+        assert_eq!(mode(&world), EditorMode::InputBoxLabel);
+        assert_eq!(world.get::<EditorState>().input_buffer, "Frontend");
+
+        keys(&mut world, "2\n");
+
+        let b = &world.get::<SequenceDiagram>().boxes[0];
+        assert_eq!(b.label, "Frontend2");
+        assert_eq!(b.color, Some(BoxColor::Green));
+        assert_eq!(mode(&world), EditorMode::Normal);
+    }
+
+    #[rstest]
+    #[case::success_picked_color_is_set("j", Some(BoxColor::Blue))]
+    #[case::success_default_pick_keeps_no_color("", None)]
+    fn r_on_bare_box_opens_picker(
+        #[case] given_moves: &str,
+        #[case] expected_color: Option<BoxColor>,
+    ) {
+        let source = "sequenceDiagram\nbox\nparticipant A\nend\n";
+        let mut world = world_with_selection(source, Selection::Box(0));
+
+        press_char(&mut world, 'r');
+        assert_eq!(mode(&world), EditorMode::SelectBoxColor);
+        assert_eq!(world.get::<EditorState>().box_color, DEFAULT_BOX_COLOR);
+
+        keys(&mut world, &format!("{given_moves}\n\n"));
+
+        let b = &world.get::<SequenceDiagram>().boxes[0];
+        assert_eq!(b.color, expected_color);
+        assert_eq!(b.label, "");
+    }
+
+    #[test]
+    fn enter_on_rgb_box_edits_label_only_and_keeps_no_color() {
+        let source = "sequenceDiagram\nbox rgb(10, 20, 30) Foo\nparticipant A\nend\n";
+        let mut world = world_with_selection(source, Selection::Box(0));
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(mode(&world), EditorMode::InputBoxLabel);
+
+        keys(&mut world, "!\n");
+
+        let b = &world.get::<SequenceDiagram>().boxes[0];
+        assert_eq!(b.label, "rgb(10, 20, 30) Foo!");
+        assert_eq!(b.color, None);
+    }
+
+    #[test]
+    fn p_on_box_adds_participant_inside_and_keeps_selection() {
+        let mut world = world_with_selection(BOX_SOURCE, Selection::Box(0));
+
+        keys(&mut world, "pZ\n");
+
+        assert_eq!(participant_ids(&world), ["A", "B", "Z", "C"]);
+        assert_eq!(box_range(&world, 0), (0, 2));
+        assert_eq!(selection(&world), Selection::Box(0));
+    }
+
+    #[test]
+    fn j_from_box_goes_to_event_and_k_returns_to_its_first_participant() {
+        let source =
+            "sequenceDiagram\nparticipant X\nbox\nparticipant A\nend\nparticipant B\nA->>B: hi\n";
+        let mut world = world_with_selection(source, Selection::Box(0));
+
+        press_char(&mut world, 'j');
+        assert_eq!(selection(&world), Selection::Event(0));
+
+        press_char(&mut world, 'k');
+        assert_eq!(selection(&world), Selection::Participant(1));
+    }
+
+    #[test]
+    fn box_preview_grows_with_l_and_escape_restores_everything() {
+        let mut world = world_with_selection(SAMPLE, Selection::Event(0));
+        let undo_before = undo_len(&world);
+        let diagram_before = diagram_of(&world);
+
+        press_char(&mut world, 'b');
+        let one = render_rows(&mut world, 80, 24);
+        press_char(&mut world, 'l');
+        let buffer = draw(&mut world, 80, 24);
+        let two = buffer_rows(&buffer);
+        let screen = two.concat();
+
+        let width = |rows: &[String]| {
+            let row = rows.iter().find(|r| r.contains('╭')).unwrap();
+            row.chars().filter(|&c| c == '┄' || c == '─').count()
+        };
+        assert!(width(&two) > width(&one));
+        assert!(screen.contains("new box"), "{screen}");
+        assert!(screen.contains("╰┄") && screen.contains("┄╯"));
+        assert!(!screen.contains("Box: "));
+        assert_eq!(style_at(&buffer, "┄").fg, world.get::<Theme>().selected.fg);
+        assert_eq!(world.get::<SequenceDiagram>().boxes.len(), 0);
+
+        press(&mut world, KeyCode::Esc);
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(!screen.contains("new box"));
+        assert!(!screen.contains("╭┄"));
+        assert_eq!(selection(&world), Selection::Event(0));
+        assert_eq!(diagram_of(&world), diagram_before);
+        assert!(!is_dirty(&world));
+        assert_eq!(undo_len(&world), undo_before);
+    }
+
+    #[test]
+    fn box_preview_follows_picker_color_and_label() {
+        let mut world = world_with_selection(SAMPLE, Selection::Participant(0));
+        keys(&mut world, "bl\n");
+
+        let before = draw(&mut world, 80, 24);
+        press_char(&mut world, 'j');
+        let after = draw(&mut world, 80, 24);
+        let color = box_color(world.get::<EditorState>().box_color);
+        assert_ne!(style_at(&before, "╭").fg, style_at(&after, "╭").fg);
+        assert_eq!(style_at(&after, "╭").fg, Some(color));
+        assert!(screen_text(&after).contains("╭┄ new box"));
+
+        keys(&mut world, "\nMine");
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("╭┄ Mine"), "{screen}");
+        assert!(!screen.contains("new box"));
+    }
+
+    #[test]
+    fn box_end_scroll_follows_the_cursor_participant() {
+        let participants: Vec<String> = (0..10).map(|i| format!("participant Pp{i}")).collect();
+        let source = format!("sequenceDiagram\n{}\n", participants.join("\n"));
+        let mut world = world_with_selection(&source, Selection::Participant(0));
+
+        press_char(&mut world, 'b');
+        for _ in 0..6 {
+            press_char(&mut world, 'l');
+            draw(&mut world, 60, 24);
+        }
+
+        let screen = screen_text(&draw(&mut world, 60, 24));
+        assert!(screen.contains("Pp6"), "{screen}");
+    }
+
+    #[test]
+    fn box_range_overlapping_existing_box_is_red_and_accents_the_start() {
+        let source = "sequenceDiagram\nparticipant A\nbox Aqua Mid\nparticipant B\nparticipant C\nend\nparticipant D\nA->>D: hi\n";
+        // Partial overlap from either side, and a range covering the whole box.
+        let cases = [(0, 'l', 1), (0, 'l', 3), (3, 'h', 1), (3, 'h', 3)];
+
+        for (start, key, steps) in cases {
+            let mut world = world_with_selection(source, Selection::Participant(start));
+            press_char(&mut world, 'b');
+            for _ in 0..steps {
+                press_char(&mut world, key);
+            }
+
+            let buffer = draw(&mut world, 100, 24);
+            let screen = screen_text(&buffer);
+            assert!(screen.contains("Mid"), "{screen}");
+            assert!(!screen.contains("new box"), "{screen}");
+            assert_eq!(style_at(&buffer, "M").fg, world.get::<Theme>().error.fg);
+            assert!(status_line(&mut world).contains("overlaps a box"));
+        }
+    }
+
+    #[test]
+    fn divider_is_drawn_between_the_sections() {
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::None);
+        let rows = render_rows(&mut world, 80, 24);
+
+        let divider = rows_containing(&rows, "├┄ [expired] ┄")[0];
+        assert!(rows[divider].contains('┤'));
+        assert!(rows_containing(&rows, "one")[0] < divider);
+        assert_eq!(rows_containing(&rows, "two")[0], divider + 1);
+    }
+
+    #[test]
+    fn s_previews_label_and_enter_adds_and_selects_divider() {
+        let mut world = world_with_selection(THREE_EVENTS_IN_ALT, Selection::Event(1));
+
+        press_char(&mut world, 's');
+        assert_eq!(mode(&world), EditorMode::InputSectionLabel);
+        let screen = screen_text(&draw(&mut world, 80, 40));
+        assert!(screen.contains("├┄┄┄"), "{screen}");
+
+        keys(&mut world, "late");
+        let screen = screen_text(&draw(&mut world, 80, 40));
+        assert!(screen.contains("├┄ [late]"), "{screen}");
+        assert_eq!(sections(&world).len(), 0);
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(sections(&world), [(1, "late".to_string())]);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+        assert_eq!(mode(&world), EditorMode::Normal);
+
+        press_char(&mut world, 'u');
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(selection(&world), Selection::Event(1));
+    }
+
+    #[test]
+    fn escape_in_section_prompt_restores_selection() {
+        let mut world = world_with_selection(THREE_EVENTS_IN_ALT, Selection::Event(2));
+
+        keys(&mut world, "sx");
+        press(&mut world, KeyCode::Esc);
+
+        assert_eq!(mode(&world), EditorMode::Normal);
+        assert_eq!(selection(&world), Selection::Event(2));
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    const OUTSIDE_SOURCE: &str = "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: x\nalt a\nA->>B: 1\nA->>B: 2\nend\nloop\nA->>B: 3\nA->>B: 4\nend\n";
+    const NEEDS_EVENT: &str = "Select an event inside alt, par or critical";
+
+    #[rstest]
+    #[case::failure_event_outside_frame(OUTSIDE_SOURCE, Selection::Event(0), NEEDS_EVENT)]
+    #[case::failure_no_selection(OUTSIDE_SOURCE, Selection::None, NEEDS_EVENT)]
+    #[case::failure_frame_selected(OUTSIDE_SOURCE, Selection::Fragment(0), NEEDS_EVENT)]
+    #[case::failure_first_event_of_frame(
+        OUTSIDE_SOURCE,
+        Selection::Event(1),
+        "Pick an event below the frame's first one"
+    )]
+    #[case::failure_frame_kind_without_sections(
+        OUTSIDE_SOURCE,
+        Selection::Event(4),
+        "'loop' has no sections"
+    )]
+    #[case::failure_section_already_starts_at_event(
+        SECTION_SOURCE,
+        Selection::Event(1),
+        "A section already starts here"
+    )]
+    #[case::failure_section_selected(
+        SECTION_SOURCE,
+        Selection::Section(0, 0),
+        "A section already starts here"
+    )]
+    fn s_reports_why_no_section_can_start(
+        #[case] given_source: &str,
+        #[case] given_selected: Selection,
+        #[case] expected_message: &str,
+    ) {
+        let mut world = world_with_selection(given_source, given_selected);
+
+        press_char(&mut world, 's');
+
+        assert_eq!(status(&world), expected_message);
+        assert_eq!(mode(&world), EditorMode::Normal);
+    }
+
+    #[rstest]
+    #[case::success_par_uses_and("par", "and")]
+    #[case::success_critical_uses_option("critical", "option")]
+    fn s_works_in_par_and_critical_frames(
+        #[case] given_keyword: &str,
+        #[case] expected_divider: &str,
+    ) {
+        let source = THREE_EVENTS_IN_ALT.replace("alt", given_keyword);
+        let mut world = world_with_selection(&source, Selection::Event(2));
+
+        keys(&mut world, "s\n");
+
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+        let exported = diagram_of(&world);
+        assert!(
+            exported.contains(&format!("    {expected_divider}\n")),
+            "{exported}"
+        );
+    }
+
+    #[test]
+    fn enter_on_divider_edits_its_label() {
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().input_buffer, "expired");
+        keys(&mut world, "!\n");
+        assert_eq!(sections(&world), [(1, "expired!".to_string())]);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+
+        press_char(&mut world, 'r');
+        press(&mut world, KeyCode::Esc);
+        assert_eq!(sections(&world), [(1, "expired!".to_string())]);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+    }
+
+    #[test]
+    fn capital_d_on_divider_merges_sections_and_selects_first_event() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        press_char(&mut world, 'D');
+
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(event_texts(&world), ["1", "2", "3", "4"]);
+        assert_eq!(selection(&world), Selection::Event(0));
+        assert_eq!(status(&world), "Section removed");
+
+        press_char(&mut world, 'u');
+        assert_eq!(sections(&world).len(), 1);
+    }
+
+    #[test]
+    fn j_and_k_move_the_selected_divider() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        keys(&mut world, "JJ");
+        assert_eq!(sections(&world)[0].0, 3);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+
+        keys(&mut world, "KKK");
+        assert_eq!(sections(&world)[0].0, 1);
+    }
+
+    #[rstest]
+    #[case::success_m_inserts_below_divider('m', "below", ["1", "2", "below", "3", "4"], 2)]
+    #[case::success_capital_m_inserts_above_divider('M', "above", ["1", "2", "above", "3", "4"], 3)]
+    fn m_and_capital_m_on_divider_insert_below_and_above(
+        #[case] given_key: char,
+        #[case] given_text: &str,
+        #[case] expected_texts: [&str; 5],
+        #[case] expected_divider_at: usize,
+    ) {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        insert_message_via_keys(&mut world, given_key, given_text);
+
+        assert_eq!(event_texts(&world), expected_texts);
+        assert_eq!(sections(&world)[0].0, expected_divider_at);
+        assert_eq!(selection(&world), Selection::Event(2));
+    }
+
+    #[test]
+    fn f_and_capital_f_on_divider_act_on_the_frame() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        press_char(&mut world, 'f');
+        assert_eq!(mode(&world), EditorMode::SelectFrameKind);
+        press(&mut world, KeyCode::Esc);
+
+        press_char(&mut world, 'F');
+        assert_eq!(frames(&world).len(), 0);
+        assert_eq!(selection(&world), Selection::Event(0));
+    }
+
+    #[test]
+    fn moving_an_event_across_a_divider_moves_the_divider() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Event(1));
+
+        press_char(&mut world, 'J');
+
+        assert_eq!(sections(&world)[0].0, 1);
+        assert_eq!(selection(&world), Selection::Event(1));
+    }
+
+    #[test]
+    fn move_that_empties_a_section_reports_it() {
+        let source = TWO_SECTIONS.replace("A->>B: 4\n", "");
+        let mut world = world_with_selection(&source, Selection::Event(2));
+
+        press_char(&mut world, 'K');
+
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(status(&world), "Section removed");
+    }
+
+    #[test]
+    fn changing_kind_to_one_without_dividers_clears_sections() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        keys(&mut world, "fj\n\n");
+
+        let diagram = world.get::<SequenceDiagram>();
+        assert_eq!(diagram.fragments[0].kind, FragmentKind::Opt);
+        assert_eq!(diagram.fragments[0].sections.len(), 0);
+        assert_eq!(status(&world), "Sections removed");
+        assert_eq!(selection(&world), Selection::Fragment(0));
+
+        press_char(&mut world, 'u');
+        assert_eq!(frames(&world)[0].0, FragmentKind::Alt);
+        assert_eq!(sections(&world).len(), 1);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+    }
+
+    #[test]
+    fn changing_alt_to_par_keeps_sections_and_exports_and() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        keys(&mut world, "fjj\n\n");
+
+        assert_eq!(frames(&world)[0].0, FragmentKind::Par);
+        assert_eq!(sections(&world).len(), 1);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+        assert!(diagram_of(&world).contains("and b"));
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("par [ok]"), "{screen}");
+    }
+
+    #[test]
+    fn restoring_a_diagram_without_the_divider_selects_its_frame() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        let mut diagram = world.get::<SequenceDiagram>().clone();
+        diagram.fragments[0].sections.clear();
+
+        restore_diagram(&mut world, diagram, Selection::Section(0, 0), "Undo");
+
+        assert_eq!(selection(&world), Selection::Fragment(0));
+    }
+
+    #[rstest]
+    #[case::success_loop_frame_header_and_footer(
+        "sequenceDiagram\nparticipant A\nparticipant B\nloop Every minute\nA->>B: one\nend\n",
+        80,
+        &["┌ loop [Every minute]", "└"],
+    )]
+    #[case::success_box_outline_and_label(
+        "sequenceDiagram\nbox Red Backend\nparticipant A\nend\nparticipant B\nA->>B: hi\n",
+        100,
+        &["╭─ Backend "],
+    )]
+    #[case::success_alt_divider_line(
+        "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: one\nelse\nA->>B: two\nend\n",
+        80,
+        &["├┄┄┄┄"],
+    )]
+    #[case::success_long_divider_label_truncated(
+        "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: one\nelse a very long divider label that cannot fit\nA->>B: two\nend\n",
+        40,
+        &["├┄ [a very", "…]"],
+    )]
+    fn diagram_draws_expected_text(
+        #[case] given_source: &str,
+        #[case] given_width: u16,
+        #[case] expected_needles: &[&str],
+    ) {
+        let mut world = world_from(given_source);
+
+        let screen = screen_text(&draw(&mut world, given_width, 24));
+
+        for needle in expected_needles {
+            assert!(screen.contains(needle), "{needle} missing in {screen}");
+        }
+    }
+
+    #[rstest]
+    #[case::success_frame_header_selected(FRAME_SOURCE, Selection::Fragment(0), "┌ opt")]
+    #[case::success_box_corner_selected(BOXED_SOURCE, Selection::Box(0), "╭")]
+    #[case::success_box_label_selected(BOXED_SOURCE, Selection::Box(0), "Frontend")]
+    #[case::success_bare_box_corner_selected(
+        "sequenceDiagram\nbox\nparticipant A\nend\nparticipant B\nA->>B: hi\n",
+        Selection::Box(0),
+        "╭"
+    )]
+    #[case::success_divider_selected(SECTION_SOURCE, Selection::Section(0, 0), "├")]
+    fn selected_item_is_drawn_in_selected_style(
+        #[case] given_source: &str,
+        #[case] given_selected: Selection,
+        #[case] given_needle: &str,
+    ) {
+        let mut world = world_with_selection(given_source, given_selected);
+
+        let buffer = draw(&mut world, 60, 24);
+
+        assert_eq!(
+            style_at(&buffer, given_needle).fg,
+            world.get::<Theme>().selected.fg
+        );
+    }
+
+    #[test]
+    fn box_renders_as_outline_without_background_and_blank_column() {
+        let mut world = world_from(BOXED_SOURCE);
+        let buffer = draw(&mut world, 60, 20);
+        let rows = buffer_rows(&buffer);
+        assert!(rows.iter().any(|r| r.contains("╭─ Frontend")));
+        assert!(rows.iter().any(|r| r.contains('╰') && r.contains('╯')));
+
+        let top = rows_containing(&rows, "╭")[0];
+        let left = col_of(&rows[top], "╭");
+        let row = u16::try_from(top).unwrap() + 5;
+        let inside = (u16::try_from(left).unwrap() + 1, row);
+        assert_eq!(buffer[inside].style().bg, buffer[(58, row)].style().bg);
+
+        let header: Vec<char> = rows[top + 1].chars().collect();
+        assert_eq!(header[left], '│');
+        assert_eq!(header[left + 1], ' ');
+        assert_eq!(header[left + 2], '┌');
+    }
+
+    #[test]
+    fn adjacent_boxes_keep_their_own_corners() {
+        let source = "sequenceDiagram\nbox One\nparticipant A\nend\nbox Two\nparticipant B\nend\n";
+        let mut world = world_from(source);
+
+        let rows = render_rows(&mut world, 40, 12);
+        let top = rows.iter().find(|r| r.contains('╭')).unwrap();
+
+        assert_eq!(top.matches('╭').count(), 2, "{top}");
+        assert_eq!(top.matches('╮').count(), 2, "{top}");
+        assert!(rows.iter().any(|r| r.matches('╰').count() == 2));
+    }
+
+    #[rstest]
+    #[case::success_tiny_width(3, 14)]
+    #[case::success_narrow_width(8, 14)]
+    #[case::success_medium_width(20, 14)]
+    #[case::success_height_one(10, 1)]
+    #[case::success_height_two(10, 2)]
+    fn narrow_and_tiny_terminals_render_without_panic(
+        #[case] given_width: u16,
+        #[case] given_height: u16,
+    ) {
+        let source = "sequenceDiagram\nbox Blue Frontend\nparticipant A\nparticipant B\nend\nparticipant C\nNote right of C: hello there\n";
+        let mut world = world_with_selection(source, Selection::Box(0));
+
+        render_rows(&mut world, given_width, given_height);
     }
 
     #[test]
     fn long_frame_label_stays_inside_narrow_window() {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\n participant A\n participant B\n A->>B: one\n",
-        )
-        .unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<SequenceDiagram>().add_fragment(
-            FragmentKind::Loop,
-            "A very long label that cannot possibly fit".to_string(),
-            0,
-            0,
-        );
+        let source = "sequenceDiagram\nparticipant A\nparticipant B\nloop A very long label that cannot possibly fit\nA->>B: one\nend\n";
+        let mut world = world_from(source);
 
-        let mut terminal = Terminal::new(TestBackend::new(30, 15)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
+        let buffer = draw(&mut world, 30, 15);
 
-        let buffer = terminal.backend().buffer();
         for y in 1..13 {
             assert_eq!(buffer[(0, y)].symbol(), "│", "left border row {y}");
             assert_eq!(buffer[(29, y)].symbol(), "│", "right border row {y}");
         }
-        let header: String = (0..30).map(|x| buffer[(x, 6)].symbol()).collect();
+        let header = buffer_rows(&buffer)[6].clone();
         assert!(header.contains("┌ loop"), "{header}");
         assert_eq!(buffer[(28, 6)].symbol(), "┐", "{header}");
     }
 
-    #[test]
-    fn right_of_note_renders_on_narrow_terminals() {
-        let source = "sequenceDiagram\nparticipant A\nparticipant B\nparticipant C\nNote right of C: hello there\n";
-        for width in [3, 8, 20] {
-            let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-            let mut world = world_with(diagram, None);
-            let mut terminal = Terminal::new(TestBackend::new(width, 14)).unwrap();
-            terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        }
-    }
-
     fn frame_screen(source: &str, width: u16) -> Vec<String> {
-        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-        let mut world = world_with(diagram, None);
-        let mut terminal = Terminal::new(TestBackend::new(width, 16)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-
-        let buffer = terminal.backend().buffer();
-        (0..16)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
-    }
-
-    fn col_of(row: &str, needle: &str) -> usize {
-        let byte = row.find(needle).unwrap();
-        row[..byte].chars().count()
+        render_rows(&mut world_from(source), width, 24)
     }
 
     #[test]
     fn self_message_keeps_lifeline_on_middle_row() {
         let screen = frame_screen("sequenceDiagram\nparticipant A\nA->>A: self\n", 40);
 
-        let row = screen.iter().position(|r| r.contains('◀')).unwrap();
+        let row = rows_containing(&screen, "◀")[0];
         let lifeline_col = col_of(&screen[row], "◀");
         assert_eq!(screen[row - 1].chars().nth(lifeline_col), Some('│'));
     }
 
     #[test]
-    fn frame_encloses_note_over_single_participant() {
-        let screen = frame_screen(
-            "sequenceDiagram\nparticipant A\nparticipant B\nopt\nNote over A: optional\nend\n",
-            60,
-        );
-
-        let note = screen.iter().find(|r| r.contains("optional")).unwrap();
-        let header = screen.iter().find(|r| r.contains("┌ opt")).unwrap();
-        let frame_left = col_of(header, "┌");
-        let frame_right = col_of(header, "┐");
-        let text_left = col_of(note, "optional");
-
-        assert!(frame_left < text_left - 1);
-        assert!(text_left + "optional".len() + 1 < frame_right);
-        assert_eq!(note.chars().nth(frame_left), Some('│'));
-        assert_eq!(note.chars().nth(frame_right), Some('│'));
-    }
-
-    fn rows_containing(screen: &[String], needle: &str) -> Vec<usize> {
-        screen
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.contains(needle))
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    #[test]
-    fn alt_enter_does_nothing_in_label_and_path_prompts() {
-        let mut world = sample_world();
-        press_char(&mut world, 'p');
-        type_text(&mut world, "a");
-        handle_key(&mut world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
-        assert_eq!(world.get::<EditorState>().input_buffer, "a");
-
-        let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("a.mmd")));
-        press_char(&mut world, 'S');
-        handle_key(&mut world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
-        assert_eq!(world.get::<EditorState>().input_buffer, "a.mmd");
-    }
-
-    #[test]
-    fn two_line_message_draws_arrow_below_both_lines() {
-        let screen = frame_screen(
-            "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: first<br/>second\n",
-            40,
-        );
-
-        let first = rows_containing(&screen, "first")[0];
-        let second = rows_containing(&screen, "second")[0];
-        let arrow = rows_containing(&screen, "▶")[0];
-
-        assert_eq!(second, first + 1);
-        assert_eq!(arrow, second + 1);
-    }
-
-    #[test]
     fn two_line_right_note_is_one_reversed_block() {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nparticipant A\nNote right of A: top<br>longer line\n",
-        )
-        .unwrap();
-        let mut world = world_with(diagram, None);
-        let mut terminal = Terminal::new(TestBackend::new(40, 16)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        let buffer = terminal.backend().buffer();
+        let source = "sequenceDiagram\nparticipant A\nNote right of A: top<br>longer line\n";
+        let mut world = world_from(source);
+        let buffer = draw(&mut world, 40, 16);
+        let rows = buffer_rows(&buffer);
 
-        let screen: Vec<String> = (0..16)
-            .map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
-        let top = rows_containing(&screen, "top")[0];
-        let longer = rows_containing(&screen, "longer line")[0];
+        let top = rows_containing(&rows, "top")[0];
+        let longer = rows_containing(&rows, "longer line")[0];
         assert_eq!(longer, top + 1);
 
-        let x = col_of(&screen[longer], "longer line") as u16;
-        for y in [top as u16, longer as u16] {
-            let reversed = buffer[(x, y)]
-                .style()
-                .add_modifier
-                .contains(ratatui::style::Modifier::REVERSED);
-            assert!(reversed, "row {y}");
+        let x = u16::try_from(col_of(&rows[longer], "longer line")).unwrap();
+        for y in [top, longer] {
+            let style = buffer[(x, u16::try_from(y).unwrap())].style();
+            assert!(style.add_modifier.contains(Modifier::REVERSED), "row {y}");
         }
     }
 
@@ -3346,22 +4225,48 @@ mod tests {
     fn two_line_self_message_wraps_both_labels() {
         let screen = frame_screen("sequenceDiagram\nparticipant A\nA->>A: self<br>loop\n", 40);
 
-        let bottom = screen.iter().position(|r| r.contains('◀')).unwrap();
+        let bottom = rows_containing(&screen, "◀")[0];
         assert!(screen[bottom - 3].contains('┐'));
         assert!(screen[bottom - 2].contains("│  │self"));
         assert!(screen[bottom - 1].contains("│  │loop"));
     }
 
     #[test]
-    fn autonumber_prefixes_only_first_line() {
+    fn two_line_message_is_numbered_once_with_arrow_below_and_notes_are_not() {
         let screen = frame_screen(
-            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nA->>B: first<br/>second\n",
-            40,
+            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nA->>B: first<br/>second\nNote over A: n\nB->>B: me\n",
+            60,
         );
 
         let first = rows_containing(&screen, "1. first")[0];
         assert!(screen[first + 1].contains("second"));
         assert!(!screen[first + 1].contains("1."));
+        assert!(screen[first + 2].contains('▶'));
+        assert!(screen.iter().any(|r| r.contains("2. me")));
+        assert!(!screen.iter().any(|r| r.contains(". n")));
+    }
+
+    #[rstest]
+    #[case::success_over_note("Note over A: optional", "optional")]
+    #[case::success_left_note("Note left of A: left note text", "left note text")]
+    fn frame_encloses_note(#[case] given_note: &str, #[case] expected_text: &str) {
+        let source =
+            format!("sequenceDiagram\nparticipant A\nparticipant B\nloop\n{given_note}\nend\n");
+        let screen = frame_screen(&source, 60);
+
+        let note_row = &screen[rows_containing(&screen, expected_text)[0]];
+        let header = &screen[rows_containing(&screen, "┌ loop")[0]];
+        let frame_left = col_of(header, "┌");
+        let frame_right = col_of(header, "┐");
+        let text_left = col_of(note_row, expected_text);
+
+        assert!(frame_left < text_left - 1, "{screen:#?}");
+        assert!(
+            text_left + expected_text.len() + 1 < frame_right,
+            "{screen:#?}"
+        );
+        assert_eq!(note_row.chars().nth(frame_left), Some('│'), "{screen:#?}");
+        assert_eq!(note_row.chars().nth(frame_right), Some('│'), "{screen:#?}");
     }
 
     #[test]
@@ -3385,702 +4290,25 @@ mod tests {
         assert_eq!(footer - header, 5);
     }
 
-    #[test]
-    fn alt_enter_inserts_line_break_in_text_input() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().mode = EditorMode::InputMessage;
-        type_text(&mut world, "a");
-        handle_key(&mut world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
-        type_text(&mut world, "b");
-
-        assert_eq!(world.get::<EditorState>().input_buffer, "a<br/>b");
-    }
-
-    #[test]
-    fn frame_encloses_self_message_loop() {
-        let screen = frame_screen(
-            "sequenceDiagram\nparticipant A\nparticipant B\nloop\nA->>A: think hard\nend\n",
-            60,
+    #[rstest]
+    #[case::success_plain_self_message("", "think hard")]
+    #[case::success_numbered_self_message("autonumber\n", "1. think hard")]
+    fn frame_encloses_self_message(#[case] given_prefix: &str, #[case] expected_text: &str) {
+        let source = format!(
+            "sequenceDiagram\n{given_prefix}participant A\nparticipant B\nloop\nA->>A: think hard\nend\n"
         );
+        let screen = frame_screen(&source, 60);
 
-        let message = screen.iter().find(|r| r.contains("think hard")).unwrap();
-        let header = screen.iter().find(|r| r.contains("┌ loop")).unwrap();
+        let message = &screen[rows_containing(&screen, expected_text)[0]];
+        let header = &screen[rows_containing(&screen, "┌ loop")[0]];
         let frame_right = col_of(header, "┐");
-        let text_end = col_of(message, "think hard") + "think hard".len();
 
-        assert!(text_end < frame_right);
-        assert_eq!(message.chars().nth(frame_right), Some('│'));
-        assert!(message.contains("think hard"));
-    }
-
-    #[test]
-    fn hash_toggles_autonumber_and_undo_restores() {
-        let mut world = sample_world();
-
-        press_char(&mut world, '#');
-        assert!(world.get::<SequenceDiagram>().autonumber);
-        assert_eq!(status(&world), "Autonumber on");
-        assert!(is_dirty(&world));
-
-        press_char(&mut world, '#');
-        assert!(!world.get::<SequenceDiagram>().autonumber);
-        assert_eq!(status(&world), "Autonumber off");
-
-        press_char(&mut world, 'u');
-        assert!(world.get::<SequenceDiagram>().autonumber);
-        press_char(&mut world, 'u');
-        assert!(!world.get::<SequenceDiagram>().autonumber);
-        assert!(!is_dirty(&world));
-    }
-
-    #[test]
-    fn shifted_hash_also_toggles_autonumber() {
-        let mut world = sample_world();
-
-        let event = KeyEvent::new(KeyCode::Char('#'), KeyModifiers::SHIFT);
-        handle_key(&mut world, event);
-
-        assert!(world.get::<SequenceDiagram>().autonumber);
-    }
-
-    #[test]
-    fn shifted_question_mark_opens_help() {
-        let mut world = sample_world();
-
-        let event = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT);
-        handle_key(&mut world, event);
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Help);
-    }
-
-    #[test]
-    fn autonumber_prefixes_messages_but_not_notes() {
-        let screen = frame_screen(
-            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nA->>B: hi\nNote over A: n\nB->>B: me\n",
-            60,
-        );
-
-        assert!(screen.iter().any(|r| r.contains("1. hi")));
-        assert!(screen.iter().any(|r| r.contains("2. me")));
-        assert!(!screen.iter().any(|r| r.contains(". n")));
-    }
-
-    #[test]
-    fn frame_encloses_numbered_self_message() {
-        let screen = frame_screen(
-            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nloop\nA->>A: think hard\nend\n",
-            60,
-        );
-
-        let message = screen.iter().find(|r| r.contains("1. think hard")).unwrap();
-        let header = screen.iter().find(|r| r.contains("┌ loop")).unwrap();
-        let frame_right = col_of(header, "┐");
-        let text_end = col_of(message, "1. think hard") + "1. think hard".len();
-
-        assert!(text_end < frame_right);
+        assert!(col_of(message, expected_text) + expected_text.len() < frame_right);
         assert_eq!(message.chars().nth(frame_right), Some('│'));
     }
 
-    fn world_selecting(source: &str, idx: usize) -> World {
-        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Event(idx);
-        world
-    }
-
     #[test]
-    fn plus_and_minus_do_nothing_on_a_message() {
-        let mut world = world_selecting("sequenceDiagram\nA->>B: hi\n", 0);
-        let before = world.get::<SequenceDiagram>().clone();
-
-        press_char(&mut world, '+');
-        press_char(&mut world, '-');
-
-        assert!(*world.get::<SequenceDiagram>() == before);
-        assert!(!is_dirty(&world));
-    }
-
-    const FRAME_MOVE_SOURCE: &str = "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: a\nopt x\nA->>B: b\nA->>B: c\nend\nA->>B: d\n";
-
-    fn world_selecting_frame(source: &str) -> World {
-        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Fragment(0);
-        world
-    }
-
-    fn event_texts(world: &World) -> Vec<String> {
-        world
-            .get::<SequenceDiagram>()
-            .events
-            .iter()
-            .map(|e| e.text().to_string())
-            .collect()
-    }
-
-    fn selection(world: &World) -> Selection {
-        world.get::<EditorState>().selection
-    }
-
-    #[test]
-    fn shift_j_and_k_move_selected_frame_and_selection_follows() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-
-        press_char(&mut world, 'J');
-        assert_eq!(event_texts(&world), ["a", "d", "b", "c"]);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-        assert_eq!(frames(&world)[0].2, 2);
-
-        press_char(&mut world, 'K');
-        assert_eq!(event_texts(&world), ["a", "b", "c", "d"]);
-        press_char(&mut world, 'K');
-        assert_eq!(event_texts(&world), ["b", "c", "a", "d"]);
-        press_char(&mut world, 'K');
-        assert_eq!(event_texts(&world), ["b", "c", "a", "d"]);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-    }
-
-    #[test]
-    fn frame_move_undo_restores_and_clamps() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-
-        press_char(&mut world, 'J');
-        press_char(&mut world, 'u');
-
-        assert_eq!(event_texts(&world), ["a", "b", "c", "d"]);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-
-        press_char(&mut world, 'J');
-    }
-
-    #[test]
-    fn d_on_frame_keeps_events_and_selects_first_event() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-
-        press_char(&mut world, 'D');
-
-        assert_eq!(frames(&world).len(), 0);
-        assert_eq!(event_texts(&world).len(), 4);
-        assert_eq!(selection(&world), Selection::Event(1));
-        assert_eq!(status(&world), "Frame removed");
-    }
-
-    #[test]
-    fn capital_f_on_frame_removes_only_the_frame() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-
-        press_char(&mut world, 'F');
-
-        assert_eq!(frames(&world).len(), 0);
-        assert_eq!(event_texts(&world).len(), 4);
-        assert_eq!(selection(&world), Selection::Event(1));
-    }
-
-    #[test]
-    fn enter_on_frame_edits_kind_and_label() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().frame_kind, FragmentKind::Opt);
-        press(&mut world, KeyCode::Down);
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().input_buffer, "x");
-        type_text(&mut world, "y");
-        press(&mut world, KeyCode::Enter);
-
-        let edited = frames(&world);
-        assert_eq!(edited[0].1, "xy");
-        assert_ne!(edited[0].0, FragmentKind::Opt);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-    }
-
-    fn insert_message_via_keys(world: &mut World, key: char, text: &str) {
-        press_char(world, key);
-        press(world, KeyCode::Enter);
-        press(world, KeyCode::Enter);
-        type_text(world, text);
-        press(world, KeyCode::Enter);
-    }
-
-    #[test]
-    fn m_on_frame_inserts_inside_and_capital_m_above() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-        insert_message_via_keys(&mut world, 'm', "in");
-        assert_eq!(event_texts(&world), ["a", "in", "b", "c", "d"]);
-        assert_eq!(frames(&world)[0].2..=frames(&world)[0].3, 1..=3);
-        assert_eq!(selection(&world), Selection::Event(1));
-
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-        insert_message_via_keys(&mut world, 'M', "out");
-        assert_eq!(event_texts(&world), ["a", "out", "b", "c", "d"]);
-        assert_eq!(frames(&world)[0].2..=frames(&world)[0].3, 2..=3);
-        assert_eq!(selection(&world), Selection::Event(1));
-    }
-
-    #[test]
-    fn frame_selection_ignores_unrelated_keys() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-        let before = world.get::<SequenceDiagram>().clone();
-
-        for c in ['H', 'L', 'a', 'A', 't'] {
-            press_char(&mut world, c);
-        }
-
-        assert!(*world.get::<SequenceDiagram>() == before);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-    }
-
-    #[test]
-    fn selected_frame_header_uses_selected_style() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-        let selected = world.get::<Theme>().selected;
-        let muted = world.get::<Theme>().muted;
-
-        let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let rows: Vec<String> = (0..24)
-            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
-        let y = rows.iter().position(|r| r.contains("┌ opt")).unwrap();
-        let x = col_of(&rows[y], "┌");
-        let (x, y) = (x as u16, y as u16);
-
-        assert_eq!(buffer[(x, y)].style().fg, selected.fg);
-        assert_ne!(buffer[(x, y)].style().fg, muted.fg);
-    }
-
-    #[test]
-    fn selecting_frame_below_viewport_scrolls_it_into_view() {
-        let messages = "A->>B: m\n".repeat(12);
-        let source = format!(
-            "sequenceDiagram\nparticipant A\nparticipant B\n{messages}opt late\nA->>B: framed\nend\n"
-        );
-        let mut world = world_selecting_frame(&source);
-
-        let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let screen: String = buffer
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect();
-        assert!(screen.contains("framed"));
-        assert!(world.get::<ScrollState>().offset > 0);
-    }
-
-    #[test]
-    fn undo_of_frame_creation_selects_its_first_event_in_view() {
-        let messages = "A->>B: m\n".repeat(20);
-        let source =
-            format!("sequenceDiagram\nparticipant A\nparticipant B\n{messages}A->>B: last\n");
-        let diagram = SequenceDiagram::from_mermaid(&source).unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Event(20);
-        add_frame_via_keys(&mut world, "");
-        press_char(&mut world, 'k');
-        assert_eq!(selection(&world), Selection::Fragment(0));
-
-        press_char(&mut world, 'u');
-
-        assert_eq!(selection(&world), Selection::Event(20));
-        let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let screen: String = buffer
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect();
-        assert!(screen.contains("last"));
-    }
-
-    #[test]
-    fn undo_of_frame_swap_keeps_selection_on_same_frame() {
-        let mut world = world_selecting_frame(
-            "sequenceDiagram\nA->>B: 0\nopt a\nA->>B: 1\nend\nloop b\nA->>B: 2\nend\n",
-        );
-        world.get_mut::<EditorState>().selection = Selection::Fragment(0);
-
-        press_char(&mut world, 'J');
-        assert_eq!(selection(&world), Selection::Fragment(1));
-        press_char(&mut world, 'u');
-
-        assert_eq!(selection(&world), Selection::Fragment(0));
-        assert_eq!(frames(&world)[0].1, "a");
-    }
-
-    #[test]
-    fn undo_of_new_frame_restores_cursor_in_view() {
-        let messages = "A->>B: m\n".repeat(20);
-        let source = format!(
-            "sequenceDiagram\nparticipant A\nparticipant B\nloop\nA->>B: top\nend\n{messages}"
-        );
-        let diagram = SequenceDiagram::from_mermaid(&source).unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Event(16);
-        add_frame_via_keys(&mut world, "");
-        press_char(&mut world, 'k');
-        assert_eq!(selection(&world), Selection::Fragment(1));
-
-        press_char(&mut world, 'u');
-
-        assert_eq!(selection(&world), Selection::Event(16));
-    }
-
-    #[test]
-    fn undo_of_label_edit_keeps_frame_selected() {
-        let mut world = world_selecting_frame(FRAME_MOVE_SOURCE);
-
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-        type_text(&mut world, "y");
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(frames(&world)[0].1, "xy");
-        press_char(&mut world, 'u');
-
-        assert_eq!(frames(&world)[0].1, "x");
-        assert_eq!(selection(&world), Selection::Fragment(0));
-    }
-
-    #[test]
-    fn undo_returns_cursor_to_moved_events_original_position() {
-        let mut world = world_selecting("sequenceDiagram\nA->>B: 0\nA->>B: 1\nA->>B: 2\n", 0);
-
-        press_char(&mut world, 'J');
-        assert_eq!(selection(&world), Selection::Event(1));
-        press_char(&mut world, 'j');
-        assert_eq!(selection(&world), Selection::Event(2));
-        press_char(&mut world, 'u');
-
-        assert_eq!(event_texts(&world), ["0", "1", "2"]);
-        assert_eq!(selection(&world), Selection::Event(0));
-
-        press_char(&mut world, 'U');
-        assert_eq!(event_texts(&world), ["1", "0", "2"]);
-        assert_eq!(selection(&world), Selection::Event(2));
-    }
-
-    const BOX_SOURCE: &str = "sequenceDiagram
-    box Blue Frontend
-        participant A
-        participant B
-    end
-    participant C
-";
-
-    fn world_selecting_box(source: &str) -> World {
-        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Box(0);
-        world
-    }
-
-    fn participant_ids(world: &World) -> Vec<String> {
-        let diagram = world.get::<SequenceDiagram>();
-        diagram.participants.iter().map(|p| p.id.clone()).collect()
-    }
-
-    fn box_range(world: &World, idx: usize) -> (usize, usize) {
-        let b = &world.get::<SequenceDiagram>().boxes[idx];
-        (b.start, b.end)
-    }
-
-    #[test]
-    fn shift_l_and_h_move_box_and_selection_follows() {
-        let mut world = world_selecting_box(BOX_SOURCE);
-
-        press_char(&mut world, 'L');
-        assert_eq!(participant_ids(&world), ["C", "A", "B"]);
-        assert_eq!(box_range(&world, 0), (1, 2));
-        assert_eq!(selection(&world), Selection::Box(0));
-
-        press_char(&mut world, 'L');
-        assert_eq!(box_range(&world, 0), (1, 2));
-
-        press_char(&mut world, 'H');
-        assert_eq!(participant_ids(&world), ["A", "B", "C"]);
-        assert_eq!(box_range(&world, 0), (0, 1));
-
-        press_char(&mut world, 'H');
-        assert_eq!(box_range(&world, 0), (0, 1));
-    }
-
-    #[test]
-    fn undo_after_box_move_restores_box_selection() {
-        let mut world = world_selecting_box(BOX_SOURCE);
-
-        press_char(&mut world, 'L');
-        press_char(&mut world, 'u');
-
-        assert_eq!(participant_ids(&world), ["A", "B", "C"]);
-        assert_eq!(selection(&world), Selection::Box(0));
-    }
-
-    #[test]
-    fn d_and_b_on_box_remove_only_the_box() {
-        for key in ['D', 'B'] {
-            let mut world = world_selecting_box(BOX_SOURCE);
-
-            press_char(&mut world, key);
-
-            assert_eq!(world.get::<SequenceDiagram>().boxes.len(), 0);
-            assert_eq!(participant_ids(&world), ["A", "B", "C"]);
-            assert_eq!(selection(&world), Selection::Participant(0));
-            assert_eq!(status(&world), "Box removed");
-        }
-    }
-
-    #[test]
-    fn enter_on_colored_box_edits_color_then_label() {
-        let mut world = world_selecting_box(BOX_SOURCE);
-
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
-        assert_eq!(world.get::<EditorState>().box_color, BoxColor::Blue);
-
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::InputBoxLabel);
-        assert_eq!(world.get::<EditorState>().input_buffer, "Frontend");
-
-        type_text(&mut world, "2");
-        press(&mut world, KeyCode::Enter);
-
-        let b = &world.get::<SequenceDiagram>().boxes[0];
-        assert_eq!(b.label, "Frontend2");
-        assert_eq!(b.color, Some(BoxColor::Green));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-    }
-
-    #[test]
-    fn enter_on_bare_box_opens_picker_and_sets_color() {
-        let source = "sequenceDiagram\nbox\nparticipant A\nend\n";
-        let mut world = world_selecting_box(source);
-
-        press_char(&mut world, 'r');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
-        assert_eq!(world.get::<EditorState>().box_color, DEFAULT_BOX_COLOR);
-
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-
-        let b = &world.get::<SequenceDiagram>().boxes[0];
-        assert_eq!(b.color, Some(BoxColor::Blue));
-        assert_eq!(b.label, "");
-    }
-
-    #[test]
-    fn enter_on_rgb_box_edits_label_only_and_keeps_no_color() {
-        let source = "sequenceDiagram\nbox rgb(10, 20, 30) Foo\nparticipant A\nend\n";
-        let mut world = world_selecting_box(source);
-
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::InputBoxLabel);
-
-        type_text(&mut world, "!");
-        press(&mut world, KeyCode::Enter);
-
-        let b = &world.get::<SequenceDiagram>().boxes[0];
-        assert_eq!(b.label, "rgb(10, 20, 30) Foo!");
-        assert_eq!(b.color, None);
-    }
-
-    #[test]
-    fn p_on_box_adds_participant_inside_and_keeps_selection() {
-        let mut world = world_selecting_box(BOX_SOURCE);
-
-        press_char(&mut world, 'p');
-        type_text(&mut world, "Z");
-        press(&mut world, KeyCode::Enter);
-
-        assert_eq!(participant_ids(&world), ["A", "B", "Z", "C"]);
-        assert_eq!(box_range(&world, 0), (0, 2));
-        assert_eq!(selection(&world), Selection::Box(0));
-    }
-
-    #[test]
-    fn j_from_box_goes_to_event_and_k_returns_to_its_first_participant() {
-        let source =
-            "sequenceDiagram\nparticipant X\nbox\nparticipant A\nend\nparticipant B\nA->>B: hi\n";
-        let mut world = world_selecting_box(source);
-
-        press_char(&mut world, 'j');
-        assert_eq!(selection(&world), Selection::Event(0));
-
-        press_char(&mut world, 'k');
-        assert_eq!(selection(&world), Selection::Participant(1));
-    }
-
-    fn render_rows(world: &mut World, width: u16, height: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| render(frame, world)).unwrap();
-        let buffer = terminal.backend().buffer();
-        (0..height)
-            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect()
-    }
-
-    #[test]
-    fn box_renders_as_outline_without_background() {
-        let mut world = sample_world_with_box();
-        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        let buffer = terminal.backend().buffer();
-
-        let rows: Vec<String> = (0..20)
-            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
-        assert!(rows.iter().any(|r| r.contains("╭─ Frontend")));
-        assert!(rows.iter().any(|r| r.contains('╰') && r.contains('╯')));
-
-        let top = rows.iter().position(|r| r.contains('╭')).unwrap();
-        let left = col_of(&rows[top], "╭") as u16;
-        let inside = (left + 1, top as u16 + 5);
-        let outside = (58, top as u16 + 5);
-        assert_eq!(buffer[inside].style().bg, buffer[outside].style().bg);
-    }
-
-    fn sample_world_with_box() -> World {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nbox Blue Frontend\nparticipant A\nparticipant B\nend\nparticipant C\nA->>C: hi\n",
-        )
-        .unwrap();
-        world_with(diagram, None)
-    }
-
-    #[test]
-    fn selected_box_outline_and_label_use_selected_style() {
-        let mut world = sample_world_with_box();
-        world.get_mut::<EditorState>().selection = Selection::Box(0);
-        let selected = world.get::<Theme>().selected;
-
-        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let rows: Vec<String> = (0..20)
-            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
-
-        let top = rows.iter().position(|r| r.contains('╭')).unwrap();
-        let left = col_of(&rows[top], "╭") as u16;
-        let label = col_of(&rows[top], "Frontend") as u16;
-        assert_eq!(buffer[(left, top as u16)].style().fg, selected.fg);
-        assert_eq!(buffer[(label, top as u16)].style().fg, selected.fg);
-    }
-
-    #[test]
-    fn selected_empty_label_box_still_highlights_top_edge() {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nbox\nparticipant A\nend\nparticipant B\nA->>B: hi\n",
-        )
-        .unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Box(0);
-        let selected = world.get::<Theme>().selected;
-
-        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
-        terminal.draw(|frame| render(frame, &mut world)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let rows: Vec<String> = (0..20)
-            .map(|y| (0..60).map(|x| buffer[(x, y)].symbol()).collect())
-            .collect();
-
-        let top = rows.iter().position(|r| r.contains('╭')).unwrap();
-        let left = col_of(&rows[top], "╭") as u16;
-        assert_eq!(buffer[(left, top as u16)].style().fg, selected.fg);
-    }
-
-    #[test]
-    fn adjacent_boxes_keep_their_own_corners() {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nbox One\nparticipant A\nend\nbox Two\nparticipant B\nend\n",
-        )
-        .unwrap();
-        let mut world = world_with(diagram, None);
-
-        let rows = render_rows(&mut world, 40, 12);
-        let top = rows.iter().find(|r| r.contains('╭')).unwrap();
-
-        assert_eq!(top.matches('╭').count(), 2, "{top}");
-        assert_eq!(top.matches('╮').count(), 2, "{top}");
-        assert!(rows.iter().any(|r| r.matches('╰').count() == 2));
-    }
-
-    #[test]
-    fn boxes_render_on_narrow_terminals() {
-        for width in [3, 8, 20] {
-            let mut world = sample_world_with_box();
-            world.get_mut::<EditorState>().selection = Selection::Box(0);
-            render_rows(&mut world, width, 14);
-        }
-    }
-
-    #[test]
-    fn single_participant_box_widens_to_show_its_label() {
-        let diagram = SequenceDiagram::from_mermaid(
-            "sequenceDiagram\nbox Red Backend\nparticipant A\nend\nparticipant B\nA->>B: hi\n",
-        )
-        .unwrap();
-        let mut world = world_with(diagram, None);
-
-        let rows = render_rows(&mut world, 100, 24);
-
-        assert!(rows.iter().any(|r| r.contains("╭─ Backend ")), "{rows:?}");
-    }
-
-    #[test]
-    fn box_border_leaves_a_blank_column_before_headers() {
-        let mut world = sample_world_with_box();
-
-        let rows = render_rows(&mut world, 60, 20);
-        let top = rows.iter().position(|r| r.contains('╭')).unwrap();
-        let left = col_of(&rows[top], "╭");
-        let header: Vec<char> = rows[top + 1].chars().collect();
-
-        assert_eq!(header[left], '│');
-        assert_eq!(header[left + 1], ' ');
-        assert_eq!(header[left + 2], '┌');
-    }
-
-    #[test]
-    fn tiny_terminals_render_without_panic() {
-        for height in [1, 2] {
-            let mut world = sample_world_with_box();
-            render_rows(&mut world, 10, height);
-        }
-    }
-
-    #[test]
-    fn confirming_default_picker_color_keeps_bare_box_uncolored() {
-        let source = "sequenceDiagram\nbox\nparticipant A\nend\n";
-        let mut world = world_selecting_box(source);
-
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-
-        assert_eq!(world.get::<SequenceDiagram>().boxes[0].color, None);
-    }
-
-    fn wide_world(messages: &str) -> World {
-        let names = (1..=8)
-            .map(|i| format!("participant Participant{i}\n"))
-            .collect::<Vec<String>>()
-            .concat();
-        let source = format!("sequenceDiagram\n{names}{messages}");
-        world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None)
-    }
-
-    fn x_offset(world: &World) -> u16 {
-        world.get::<ScrollState>().x_offset
-    }
-
-    #[test]
-    fn selecting_participants_scrolls_wide_diagram_sideways() {
+    fn selecting_participants_scrolls_wide_diagram_sideways_with_a_blank_edge_column() {
         let mut world = wide_world("");
         press_char(&mut world, 'l');
 
@@ -4097,6 +4325,10 @@ mod tests {
         assert!(rows[3].contains("Participant8"), "{}", rows[3]);
         assert!(rows[3].starts_with('‹'), "{}", rows[3]);
         assert!(x_offset(&world) > 0);
+        let header: Vec<char> = rows[2].chars().collect();
+        let corner = header.iter().rposition(|&c| c == '┐').unwrap();
+        assert_eq!(header[corner + 1], ' ', "{}", rows[2]);
+        assert_eq!(header[79], '│', "{}", rows[2]);
 
         for _ in 0..7 {
             press_char(&mut world, 'h');
@@ -4121,898 +4353,38 @@ mod tests {
         let mut world = wide_world(
             "loop retry\nParticipant4->>Participant6: first message\nend\nParticipant8->>Participant8: self\n",
         );
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_box("Group".to_string(), BoxColor::Blue, 1, 4);
+        let diagram = world.get_mut::<SequenceDiagram>();
+        diagram.add_box("Group".to_string(), BoxColor::Blue, 1, 4);
+        let selections = [
+            Selection::Participant(0),
+            Selection::Participant(7),
+            Selection::Box(0),
+            Selection::Fragment(0),
+            Selection::Event(0),
+            Selection::Event(1),
+        ];
 
         for width in [3, 8, 20, 37, 60, 80] {
-            let selections = [
-                Selection::Participant(0),
-                Selection::Participant(7),
-                Selection::Box(0),
-                Selection::Fragment(0),
-                Selection::Event(0),
-                Selection::Event(1),
-            ];
-            for selection in selections {
-                world.get_mut::<EditorState>().selection = selection;
+            for selected in selections {
+                world.get_mut::<EditorState>().selection = selected;
                 let rows = render_rows(&mut world, width, 24);
 
-                if width < 3 {
-                    continue;
-                }
                 let middle: Vec<char> = rows[12].chars().collect();
-                assert_eq!(middle[0], '│', "{selection:?} at width {width}");
-                assert_eq!(
-                    middle[usize::from(width) - 1],
-                    '│',
-                    "{selection:?} at width {width}"
-                );
+                assert_eq!(middle[0], '│', "{selected:?} at width {width}");
+                let last = usize::from(width) - 1;
+                assert_eq!(middle[last], '│', "{selected:?} at width {width}");
             }
         }
-    }
-
-    #[test]
-    fn g_and_shift_g_jump_to_first_and_last_event() {
-        let mut world = framed_world();
-        press_char(&mut world, 'G');
-        assert_eq!(selection(&world), Selection::Event(2));
-
-        press_char(&mut world, 'g');
-        assert_eq!(selection(&world), Selection::Event(0));
-    }
-
-    #[test]
-    fn g_selects_frame_header_when_first_event_starts_a_frame() {
-        let mut world = framed_world();
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_fragment(FragmentKind::Loop, String::new(), 0, 1);
-        world.get_mut::<EditorState>().selection = Selection::Event(2);
-
-        press_char(&mut world, 'g');
-
-        assert_eq!(selection(&world), Selection::Fragment(0));
-    }
-
-    #[test]
-    fn g_and_shift_g_do_nothing_without_events() {
-        let diagram = SequenceDiagram::from_mermaid("sequenceDiagram\nparticipant A\n").unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
-
-        press_char(&mut world, 'g');
-        press_char(&mut world, 'G');
-
-        assert_eq!(selection(&world), Selection::Participant(0));
-    }
-
-    #[test]
-    fn shift_g_scrolls_long_diagram_vertically() {
-        let messages = (1..=20)
-            .map(|i| format!("A->>B: message {i}\n"))
-            .collect::<Vec<String>>()
-            .concat();
-        let source = format!("sequenceDiagram\n{messages}");
-        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
-
-        press_char(&mut world, 'G');
-        let rows = render_rows(&mut world, 60, 16);
-
-        assert!(rows.iter().any(|r| r.contains("message 20")));
-        assert!(world.get::<ScrollState>().offset > 0);
-    }
-
-    #[test]
-    fn scrolled_fully_right_leaves_blank_column_after_last_header() {
-        let mut world = wide_world("");
-        world.get_mut::<EditorState>().selection = Selection::Participant(7);
-
-        let rows = render_rows(&mut world, 80, 24);
-        let header: Vec<char> = rows[2].chars().collect();
-        let corner = header.iter().rposition(|&c| c == '┐').unwrap();
-
-        assert_eq!(header[corner + 1], ' ', "{}", rows[2]);
-        assert_eq!(header[79], '│', "{}", rows[2]);
-    }
-
-    #[test]
-    fn frame_around_left_note_of_first_participant_keeps_left_edge() {
-        let mut world = world_with(
-            SequenceDiagram::from_mermaid(
-                "sequenceDiagram\nparticipant A\nparticipant B\nloop\nNote left of A: left note text\nend\n",
-            )
-            .unwrap(),
-            None,
-        );
-
-        let rows = render_rows(&mut world, 40, 16);
-        let note_row = rows.iter().find(|r| r.contains("left note text")).unwrap();
-        let note_col = col_of(note_row, "left note text");
-        let frame_row = rows.iter().find(|r| r.contains("┌ loop")).unwrap();
-        let frame_col = col_of(frame_row, "┌");
-
-        assert!(frame_col < note_col, "{rows:#?}");
-        assert!(note_row.chars().nth(frame_col) == Some('│'), "{rows:#?}");
-    }
-
-    fn draw(world: &mut World, width: u16, height: u16) -> ratatui::buffer::Buffer {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| render(frame, world)).unwrap();
-        terminal.backend().buffer().clone()
-    }
-
-    fn screen_text(buffer: &ratatui::buffer::Buffer) -> String {
-        buffer
-            .content()
-            .iter()
-            .map(ratatui::buffer::Cell::symbol)
-            .collect()
-    }
-
-    fn status_line(world: &mut World) -> String {
-        let buffer = draw(world, 100, 24);
-        (0..100).map(|x| buffer[(x, 23)].symbol()).collect()
-    }
-
-    /// Style of the first cell showing `symbol`.
-    fn style_of(buffer: &ratatui::buffer::Buffer, symbol: &str) -> ratatui::style::Style {
-        let cell = buffer
-            .content()
-            .iter()
-            .find(|c| c.symbol() == symbol)
-            .unwrap_or_else(|| panic!("no {symbol} on screen"));
-        cell.style()
-    }
-
-    fn undo_len(world: &World) -> usize {
-        world.get::<AppState>().undo_stack.len()
-    }
-
-    #[test]
-    fn f_with_nothing_selected_starts_at_first_event() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::None;
-
-        press_char(&mut world, 'f');
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameEnd);
-        assert_eq!(world.get::<EditorState>().selection, Selection::Event(0));
-        assert_eq!(world.get::<EditorState>().frame_start, Some(0));
-    }
-
-    #[test]
-    fn f_with_participant_selected_starts_at_first_event() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(1);
-
-        press_char(&mut world, 'f');
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameEnd);
-        assert_eq!(world.get::<EditorState>().selection, Selection::Event(0));
-    }
-
-    #[test]
-    fn f_without_events_shows_error() {
-        let diagram = SequenceDiagram::from_mermaid("sequenceDiagram\n participant A\n").unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = Selection::None;
-
-        press_char(&mut world, 'f');
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(status(&world), "Add a message first (m)");
-    }
-
-    #[test]
-    fn frame_preview_is_drawn_while_selecting_and_gone_after_escape() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        let undo_before = undo_len(&world);
-        let diagram_before = world.get::<SequenceDiagram>().to_mermaid();
-
-        press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
-        let screen = screen_text(&draw(&mut world, 80, 24));
-
-        assert!(screen.contains("┌ new frame"), "{screen}");
-        assert!(screen.contains("└┄") && screen.contains("┄┘"));
-        assert_eq!(world.get::<SequenceDiagram>().fragments.len(), 0);
-
-        press(&mut world, KeyCode::Esc);
-        let screen = screen_text(&draw(&mut world, 80, 24));
-
-        assert!(!screen.contains("new frame"));
-        assert!(!screen.contains("└┄"));
-        assert_eq!(world.get::<SequenceDiagram>().to_mermaid(), diagram_before);
-        assert!(!is_dirty(&world));
-        assert_eq!(undo_len(&world), undo_before);
-    }
-
-    #[test]
-    fn frame_preview_grows_with_cursor() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-
-        press_char(&mut world, 'f');
-        let one: Vec<String> = render_rows(&mut world, 80, 24);
-        press_char(&mut world, 'j');
-        let two: Vec<String> = render_rows(&mut world, 80, 24);
-
-        let footer = |rows: &[String]| rows.iter().position(|r| r.contains("└┄")).unwrap();
-        assert!(footer(&two) > footer(&one));
-    }
-
-    #[test]
-    fn frame_preview_over_existing_frame_marks_it_red_with_hint() {
-        let mut world = framed_world();
-        world.get_mut::<SequenceDiagram>().add_fragment(
-            FragmentKind::Loop,
-            "Mark".to_string(),
-            1,
-            1,
-        );
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, 'f');
-
-        let ok = draw(&mut world, 100, 24);
-        assert_eq!(style_of(&ok, "M").fg, world.get::<Theme>().accent.fg);
-        assert!(!status_line(&mut world).contains("overlaps a frame"));
-
-        press_char(&mut world, 'j');
-        let buffer = draw(&mut world, 100, 24);
-
-        let error = world.get::<Theme>().error;
-        assert_eq!(style_of(&buffer, "M").fg, error.fg);
-        assert!(!screen_text(&buffer).contains("new frame"));
-        assert!(status_line(&mut world).contains("overlaps a frame"));
-    }
-
-    #[test]
-    fn frame_mode_hints() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-
-        press_char(&mut world, 'f');
-        assert!(
-            status_line(&mut world)
-                .contains("j/k: choose last message  Enter: pick kind  Esc: cancel")
-        );
-
-        press(&mut world, KeyCode::Enter);
-        assert!(status_line(&mut world).contains("j/k: kind  Enter: next (label)  Esc: cancel"));
-
-        press(&mut world, KeyCode::Enter);
-        let screen = screen_text(&draw(&mut world, 100, 24));
-        assert!(screen.contains("Label (optional, Enter to finish):"));
-    }
-
-    #[test]
-    fn b_without_participants_shows_error() {
-        let mut world = world_with(SequenceDiagram::new(), None);
-
-        press_char(&mut world, 'b');
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(status(&world), "Add a participant first (p)");
-    }
-
-    #[test]
-    fn b_starts_at_selected_participant_else_first() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(1);
-        press_char(&mut world, 'b');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
-        assert_eq!(world.get::<EditorState>().box_start, Some(1));
-        assert_eq!(selection(&world), Selection::Participant(1));
-        press(&mut world, KeyCode::Esc);
-
-        world.get_mut::<EditorState>().selection = Selection::None;
-        press_char(&mut world, 'b');
-        assert_eq!(world.get::<EditorState>().box_start, Some(0));
-        assert_eq!(selection(&world), Selection::Participant(0));
-        press(&mut world, KeyCode::Esc);
-
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, 'b');
-        assert_eq!(world.get::<EditorState>().box_start, Some(0));
-    }
-
-    #[test]
-    fn b_on_box_or_member_edits_that_box() {
-        let mut world = sample_world_with_box();
-        world.get_mut::<EditorState>().selection = Selection::Box(0);
-        press_char(&mut world, 'b');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
-        assert_eq!(world.get::<EditorState>().box_start, None);
-        press(&mut world, KeyCode::Esc);
-
-        world.get_mut::<EditorState>().selection = Selection::Participant(1);
-        press_char(&mut world, 'b');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
-        assert_eq!(selection(&world), Selection::Box(0));
-    }
-
-    #[test]
-    fn b_with_nothing_selected_skips_boxed_participants() {
-        let mut world = sample_world_with_box();
-        world.get_mut::<EditorState>().selection = Selection::None;
-
-        press_char(&mut world, 'b');
-
-        assert_eq!(world.get::<EditorState>().box_start, Some(2));
-    }
-
-    #[test]
-    fn b_with_every_participant_boxed_shows_error() {
-        let mut world = sample_world();
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_box(String::new(), BoxColor::Red, 0, 1);
-        world.get_mut::<EditorState>().selection = Selection::None;
-
-        press_char(&mut world, 'b');
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(status(&world), "No free participants to box");
-    }
-
-    #[test]
-    fn f_with_nothing_selected_skips_framed_events() {
-        let mut world = framed_world();
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_fragment(FragmentKind::Loop, String::new(), 0, 1);
-        world.get_mut::<EditorState>().selection = Selection::None;
-
-        press_char(&mut world, 'f');
-        assert_eq!(world.get::<EditorState>().frame_start, Some(2));
-        press(&mut world, KeyCode::Esc);
-
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_fragment(FragmentKind::Opt, String::new(), 2, 2);
-        press_char(&mut world, 'f');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(status(&world), "No free messages to frame");
-    }
-
-    #[test]
-    fn box_end_moves_only_with_h_and_l() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
-        press_char(&mut world, 'b');
-
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Down);
-        assert_eq!(selection(&world), Selection::Participant(0));
-
-        press_char(&mut world, 'l');
-        assert_eq!(selection(&world), Selection::Participant(1));
-        press_char(&mut world, 'l');
-        assert_eq!(selection(&world), Selection::Participant(1));
-        press(&mut world, KeyCode::Left);
-        assert_eq!(selection(&world), Selection::Participant(0));
-    }
-
-    #[test]
-    fn box_preview_grows_with_l_and_escape_restores_everything() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        let undo_before = undo_len(&world);
-        let diagram_before = world.get::<SequenceDiagram>().to_mermaid();
-
-        press_char(&mut world, 'b');
-        let one = render_rows(&mut world, 80, 24);
-        press_char(&mut world, 'l');
-        let two = render_rows(&mut world, 80, 24);
-        let buffer = draw(&mut world, 80, 24);
-        let screen = screen_text(&buffer);
-
-        let width = |rows: &[String]| {
-            let row = rows.iter().find(|r| r.contains("╭")).unwrap();
-            row.chars().filter(|&c| c == '┄' || c == '─').count()
-        };
-        assert!(width(&two) > width(&one));
-        assert!(screen.contains("new box"), "{screen}");
-        assert!(screen.contains("╰┄") && screen.contains("┄╯"));
-        assert_eq!(style_of(&buffer, "┄").fg, world.get::<Theme>().selected.fg);
-        assert_eq!(world.get::<SequenceDiagram>().boxes.len(), 0);
-
-        press(&mut world, KeyCode::Esc);
-        let screen = screen_text(&draw(&mut world, 80, 24));
-
-        assert!(!screen.contains("new box"));
-        assert!(!screen.contains("╭┄"));
-        assert_eq!(selection(&world), Selection::Event(0));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(world.get::<SequenceDiagram>().to_mermaid(), diagram_before);
-        assert!(!is_dirty(&world));
-        assert_eq!(undo_len(&world), undo_before);
-    }
-
-    #[test]
-    fn box_selection_renders_no_participant_popup() {
-        let mut world = sample_world();
-        press_char(&mut world, 'b');
-
-        let screen = screen_text(&draw(&mut world, 80, 24));
-
-        assert!(!screen.contains("Box: "));
-    }
-
-    #[test]
-    fn box_range_overlapping_existing_boxes_keeps_them_drawn_in_red() {
-        let source = "sequenceDiagram\nparticipant A\nbox Aqua Mid\nparticipant B\nparticipant C\nend\nparticipant D\nA->>D: hi\n";
-        // Partial overlap from either side, and a range covering the whole box.
-        let cases = [(0, 'l', 1), (0, 'l', 3), (3, 'h', 1), (3, 'h', 3)];
-
-        for (start, key, steps) in cases {
-            let mut world = world_with(SequenceDiagram::from_mermaid(source).unwrap(), None);
-            world.get_mut::<EditorState>().selection = Selection::Participant(start);
-            press_char(&mut world, 'b');
-            for _ in 0..steps {
-                press_char(&mut world, key);
-            }
-
-            let buffer = draw(&mut world, 100, 24);
-            let screen = screen_text(&buffer);
-            assert!(screen.contains("Mid"), "{screen}");
-            assert!(!screen.contains("new box"), "{screen}");
-            assert_eq!(style_of(&buffer, "M").fg, world.get::<Theme>().error.fg);
-            assert!(status_line(&mut world).contains("overlaps a box"));
-        }
-    }
-
-    #[test]
-    fn box_end_hint() {
-        let mut world = sample_world();
-
-        press_char(&mut world, 'b');
-
-        assert!(
-            status_line(&mut world)
-                .contains("h/l: choose last participant  Enter: pick color  Esc: cancel")
-        );
-    }
-
-    #[test]
-    fn escape_after_f_restores_selection_from_before() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(1);
-
-        press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Esc);
-
-        assert_eq!(selection(&world), Selection::Participant(1));
-    }
-
-    #[test]
-    fn box_end_scroll_follows_the_cursor_participant() {
-        let participants: Vec<String> = (0..10).map(|i| format!("participant Pp{i}")).collect();
-        let source = format!("sequenceDiagram\n{}\n", participants.join("\n"));
-        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
-
-        press_char(&mut world, 'b');
-        for _ in 0..6 {
-            press_char(&mut world, 'l');
-            draw(&mut world, 60, 24);
-        }
-
-        let screen = screen_text(&draw(&mut world, 60, 24));
-        assert!(screen.contains("Pp6"), "{screen}");
-    }
-
-    #[test]
-    fn box_preview_follows_picker_color_and_label() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
-        press_char(&mut world, 'b');
-        press_char(&mut world, 'l');
-        press(&mut world, KeyCode::Enter);
-
-        let before = draw(&mut world, 80, 24);
-        press_char(&mut world, 'j');
-        let after = draw(&mut world, 80, 24);
-        assert_ne!(style_of(&before, "╭").fg, style_of(&after, "╭").fg);
-        assert_eq!(
-            style_of(&after, "╭").fg,
-            Some(box_color(world.get::<EditorState>().box_color))
-        );
-        assert!(screen_text(&after).contains("╭┄ new box"));
-
-        press(&mut world, KeyCode::Enter);
-        type_text(&mut world, "Mine");
-        let screen = screen_text(&draw(&mut world, 80, 24));
-        assert!(screen.contains("╭┄ Mine"), "{screen}");
-        assert!(!screen.contains("new box"));
-    }
-
-    #[test]
-    fn frame_preview_follows_picker_kind_and_label() {
-        let mut world = framed_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Enter);
-
-        let screen = screen_text(&draw(&mut world, 80, 24));
-        assert!(screen.contains("┌ loop"), "{screen}");
-        press_char(&mut world, 'k');
-        let screen = screen_text(&draw(&mut world, 80, 24));
-        assert!(screen.contains("┌ break"), "{screen}");
-
-        press(&mut world, KeyCode::Enter);
-        type_text(&mut world, "Why");
-        let screen = screen_text(&draw(&mut world, 80, 24));
-        assert!(screen.contains("break [Why]"), "{screen}");
-    }
-
-    #[test]
-    fn escape_at_every_create_step_restores_selection() {
-        for steps in 0..3 {
-            let mut world = framed_world();
-            world.get_mut::<EditorState>().selection = Selection::Participant(1);
-            press_char(&mut world, 'f');
-            for _ in 0..steps {
-                press(&mut world, KeyCode::Enter);
-            }
-            press(&mut world, KeyCode::Esc);
-            assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-            assert_eq!(selection(&world), Selection::Participant(1));
-
-            world.get_mut::<EditorState>().selection = Selection::Event(2);
-            press_char(&mut world, 'b');
-            press_char(&mut world, 'l');
-            for _ in 0..steps {
-                press(&mut world, KeyCode::Enter);
-            }
-            press(&mut world, KeyCode::Esc);
-            assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-            assert_eq!(selection(&world), Selection::Event(2));
-        }
-    }
-
-    #[test]
-    fn overlapping_box_range_highlights_headers_in_accent() {
-        let mut world = sample_world_with_box();
-        world.get_mut::<EditorState>().selection = Selection::Participant(2);
-        press_char(&mut world, 'b');
-        press_char(&mut world, 'h');
-
-        let buffer = draw(&mut world, 100, 24);
-
-        // Header of C (start of the range, not the cursor) is accented.
-        assert_eq!(style_of(&buffer, "C").fg, world.get::<Theme>().accent.fg);
-    }
-
-    const SECTION_SOURCE: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: one\nelse expired\nB->>A: two\nend\n";
-    const THREE_EVENTS_IN_ALT: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: 1\nA->>B: 2\nA->>B: 3\nend\n";
-    const TWO_SECTIONS: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: 1\nA->>B: 2\nelse b\nA->>B: 3\nA->>B: 4\nend\n";
-
-    fn world_with_selection(source: &str, selection: Selection) -> World {
-        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
-        let mut world = world_with(diagram, None);
-        world.get_mut::<EditorState>().selection = selection;
-        world
-    }
-
-    fn sections(world: &World) -> Vec<(usize, String)> {
-        world.get::<SequenceDiagram>().fragments[0].sections.clone()
-    }
-
-    fn screen_row(buffer: &ratatui::buffer::Buffer, needle: &str) -> usize {
-        let width = usize::from(buffer.area.width);
-        let screen = screen_text(buffer);
-        let pos = screen
-            .find(needle)
-            .unwrap_or_else(|| panic!("no {needle} on screen"));
-        screen[..pos].chars().count() / width
-    }
-
-    #[test]
-    fn divider_is_drawn_between_the_sections() {
-        let mut world = world_with_selection(SECTION_SOURCE, Selection::None);
-        let buffer = draw(&mut world, 80, 24);
-        let screen = screen_text(&buffer);
-
-        assert!(screen.contains("├┄ [expired] ┄"), "{screen}");
-        assert!(screen.contains('┤'), "{screen}");
-        let divider = screen_row(&buffer, "├┄ [expired]");
-        assert!(screen_row(&buffer, "one") < divider);
-        assert_eq!(screen_row(&buffer, "two"), divider + 1);
-    }
-
-    #[test]
-    fn divider_without_label_is_all_dashes() {
-        let source = SECTION_SOURCE.replace("else expired", "else");
-        let mut world = world_with_selection(&source, Selection::None);
-        let screen = screen_text(&draw(&mut world, 80, 24));
-
-        assert!(screen.contains("├┄┄┄┄"), "{screen}");
-        assert!(!screen.contains("[]"), "{screen}");
-    }
-
-    #[test]
-    fn long_divider_label_is_truncated_in_narrow_terminal() {
-        let source = SECTION_SOURCE.replace("expired", "a very long divider label that cannot fit");
-        let mut world = world_with_selection(&source, Selection::None);
-        let screen = screen_text(&draw(&mut world, 40, 24));
-
-        assert!(screen.contains("├┄ [a very"), "{screen}");
-        assert!(screen.contains("…]"), "{screen}");
-    }
-
-    #[test]
-    fn selected_divider_is_highlighted() {
-        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
-        let buffer = draw(&mut world, 80, 24);
-
-        assert_eq!(style_of(&buffer, "├").fg, world.get::<Theme>().selected.fg);
-    }
-
-    #[test]
-    fn s_previews_label_and_enter_adds_and_selects_divider() {
-        let mut world = world_with_selection(THREE_EVENTS_IN_ALT, Selection::Event(1));
-
-        press_char(&mut world, 's');
-        assert_eq!(
-            world.get::<EditorState>().mode,
-            EditorMode::InputSectionLabel
-        );
-        let screen = screen_text(&draw(&mut world, 80, 40));
-        assert!(screen.contains("├┄┄┄"), "{screen}");
-
-        type_text(&mut world, "late");
-        let screen = screen_text(&draw(&mut world, 80, 40));
-        assert!(screen.contains("├┄ [late]"), "{screen}");
-        assert_eq!(sections(&world).len(), 0);
-
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(sections(&world), [(1, "late".to_string())]);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-
-        press_char(&mut world, 'u');
-        assert_eq!(sections(&world).len(), 0);
-        assert_eq!(selection(&world), Selection::Event(1));
-    }
-
-    #[test]
-    fn escape_in_section_prompt_restores_selection() {
-        let mut world = world_with_selection(THREE_EVENTS_IN_ALT, Selection::Event(2));
-        press_char(&mut world, 's');
-        type_text(&mut world, "x");
-        press(&mut world, KeyCode::Esc);
-
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        assert_eq!(selection(&world), Selection::Event(2));
-        assert_eq!(sections(&world).len(), 0);
-        assert_eq!(undo_len(&world), 0);
-    }
-
-    #[test]
-    fn s_reports_why_no_section_can_start() {
-        let outside = "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: x\nalt a\nA->>B: 1\nA->>B: 2\nend\nloop\nA->>B: 3\nA->>B: 4\nend\n";
-        let cases = [
-            (
-                Selection::Event(0),
-                "Select an event inside alt, par or critical",
-            ),
-            (
-                Selection::None,
-                "Select an event inside alt, par or critical",
-            ),
-            (
-                Selection::Participant(0),
-                "Select an event inside alt, par or critical",
-            ),
-            (
-                Selection::Fragment(0),
-                "Select an event inside alt, par or critical",
-            ),
-            (
-                Selection::Event(1),
-                "Pick an event below the frame's first one",
-            ),
-            (Selection::Event(4), "'loop' has no sections"),
-        ];
-        for (sel, message) in cases {
-            let mut world = world_with_selection(outside, sel);
-            press_char(&mut world, 's');
-            assert_eq!(status(&world), message, "{sel:?}");
-            assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        }
-
-        let mut world = world_with_selection(SECTION_SOURCE, Selection::Event(1));
-        press_char(&mut world, 's');
-        assert_eq!(status(&world), "A section already starts here");
-
-        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
-        press_char(&mut world, 's');
-        assert_eq!(status(&world), "A section already starts here");
-    }
-
-    #[test]
-    fn enter_on_divider_edits_its_label() {
-        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
-
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().input_buffer, "expired");
-        type_text(&mut world, "!");
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(sections(&world), [(1, "expired!".to_string())]);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
-
-        press_char(&mut world, 'r');
-        press(&mut world, KeyCode::Esc);
-        assert_eq!(sections(&world), [(1, "expired!".to_string())]);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
-    }
-
-    #[test]
-    fn capital_d_on_divider_merges_sections_and_selects_first_event() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        press_char(&mut world, 'D');
-
-        assert_eq!(sections(&world).len(), 0);
-        assert_eq!(event_texts(&world), ["1", "2", "3", "4"]);
-        assert_eq!(selection(&world), Selection::Event(0));
-        assert_eq!(status(&world), "Section removed");
-
-        press_char(&mut world, 'u');
-        assert_eq!(sections(&world).len(), 1);
-    }
-
-    #[test]
-    fn j_and_k_move_the_selected_divider() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-
-        press_char(&mut world, 'J');
-        assert_eq!(sections(&world)[0].0, 3);
-        press_char(&mut world, 'J');
-        assert_eq!(sections(&world)[0].0, 3);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
-
-        press_char(&mut world, 'K');
-        press_char(&mut world, 'K');
-        press_char(&mut world, 'K');
-        assert_eq!(sections(&world)[0].0, 1);
-    }
-
-    #[test]
-    fn m_and_capital_m_on_divider_insert_below_and_above() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        insert_message_via_keys(&mut world, 'm', "below");
-        assert_eq!(event_texts(&world), ["1", "2", "below", "3", "4"]);
-        assert_eq!(sections(&world)[0].0, 2);
-        assert_eq!(selection(&world), Selection::Event(2));
-
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        insert_message_via_keys(&mut world, 'M', "above");
-        assert_eq!(event_texts(&world), ["1", "2", "above", "3", "4"]);
-        assert_eq!(sections(&world)[0].0, 3);
-        assert_eq!(selection(&world), Selection::Event(2));
-    }
-
-    #[test]
-    fn f_and_capital_f_on_divider_act_on_the_frame() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        press_char(&mut world, 'f');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
-        press(&mut world, KeyCode::Esc);
-
-        press_char(&mut world, 'F');
-        assert_eq!(world.get::<SequenceDiagram>().fragments.len(), 0);
-        assert_eq!(selection(&world), Selection::Event(0));
-    }
-
-    #[test]
-    fn moving_an_event_across_a_divider_moves_the_divider() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Event(1));
-        press_char(&mut world, 'J');
-
-        assert_eq!(sections(&world)[0].0, 1);
-        assert_eq!(selection(&world), Selection::Event(1));
-    }
-
-    #[test]
-    fn move_that_empties_a_section_reports_it() {
-        let source = TWO_SECTIONS.replace("A->>B: 4\n", "");
-        let mut world = world_with_selection(&source, Selection::Event(2));
-        press_char(&mut world, 'K');
-
-        assert_eq!(sections(&world).len(), 0);
-        assert_eq!(status(&world), "Section removed");
-    }
-
-    #[test]
-    fn changing_kind_to_one_without_dividers_clears_sections() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-
-        let diagram = world.get::<SequenceDiagram>();
-        assert_eq!(diagram.fragments[0].kind, FragmentKind::Opt);
-        assert_eq!(diagram.fragments[0].sections.len(), 0);
-        assert_eq!(status(&world), "Sections removed");
-        assert_eq!(selection(&world), Selection::Fragment(0));
-
-        press_char(&mut world, 'u');
-        assert_eq!(
-            world.get::<SequenceDiagram>().fragments[0].kind,
-            FragmentKind::Alt
-        );
-        assert_eq!(sections(&world).len(), 1);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
-    }
-
-    #[test]
-    fn changing_alt_to_par_keeps_sections_and_exports_and() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        press_char(&mut world, 'f');
-        press_char(&mut world, 'j');
-        press_char(&mut world, 'j');
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-
-        assert_eq!(
-            world.get::<SequenceDiagram>().fragments[0].kind,
-            FragmentKind::Par
-        );
-        assert_eq!(sections(&world).len(), 1);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
-        assert!(
-            world
-                .get::<SequenceDiagram>()
-                .to_mermaid()
-                .contains("and b")
-        );
-
-        let screen = screen_text(&draw(&mut world, 80, 24));
-        assert!(screen.contains("par [ok]"), "{screen}");
-    }
-
-    #[test]
-    fn s_works_in_par_and_critical_frames() {
-        for keyword in ["par", "critical"] {
-            let source = THREE_EVENTS_IN_ALT.replace("alt", keyword);
-            let mut world = world_with_selection(&source, Selection::Event(2));
-            press_char(&mut world, 's');
-            press(&mut world, KeyCode::Enter);
-
-            assert_eq!(selection(&world), Selection::Section(0, 0), "{keyword}");
-            let divider = if keyword == "par" { "and" } else { "option" };
-            let exported = world.get::<SequenceDiagram>().to_mermaid();
-            assert!(exported.contains(&format!("    {divider}\n")), "{exported}");
-        }
-    }
-
-    #[test]
-    fn restoring_a_diagram_without_the_divider_selects_its_frame() {
-        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
-        let mut diagram = world.get::<SequenceDiagram>().clone();
-        diagram.fragments[0].sections.clear();
-
-        restore_diagram(&mut world, diagram, Selection::Section(0, 0), "Undo");
-
-        assert_eq!(selection(&world), Selection::Fragment(0));
     }
 
     fn mouse(world: &mut World, kind: MouseEventKind, modifiers: KeyModifiers, x: u16, y: u16) {
-        handle_mouse(
-            world,
-            MouseEvent {
-                kind,
-                column: x,
-                row: y,
-                modifiers,
-            },
-        );
+        let event = MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers,
+        };
+        handle_mouse(world, event);
     }
 
     fn click(world: &mut World, x: u16, y: u16) {
@@ -5025,7 +4397,6 @@ mod tests {
         mouse(world, kind, KeyModifiers::NONE, x, y);
     }
 
-    /// Clicks and releases at the same cell.
     fn click_release(world: &mut World, x: u16, y: u16) {
         click(world, x, y);
         release(world, x, y);
@@ -5035,84 +4406,42 @@ mod tests {
         mouse(world, kind, modifiers, 5, 5);
     }
 
-    /// Screen position of the first cell of `text`.
-    fn find(buffer: &ratatui::buffer::Buffer, text: &str) -> (u16, u16) {
-        let width = usize::from(buffer.area.width);
-        let screen = screen_text(buffer);
-        let pos = screen
-            .find(text)
-            .unwrap_or_else(|| panic!("no {text} on screen: {screen}"));
-        let cell = screen[..pos].chars().count();
-        ((cell % width) as u16, (cell / width) as u16)
-    }
-
     /// Draws, then clicks and releases `dy` rows below the first cell of `text`.
-    fn click_text(world: &mut World, size: (u16, u16), text: &str, dy: u16) {
-        let buffer = draw(world, size.0, size.1);
+    fn click_text(world: &mut World, text: &str, dy: u16) {
+        let buffer = draw(world, MOUSE_SIZE.0, MOUSE_SIZE.1);
         let (x, y) = find(&buffer, text);
         click_release(world, x, y + dy);
     }
 
-    const MOUSE_SOURCE: &str = "sequenceDiagram\nbox Blue Team\nparticipant Alice\nparticipant Bob\nend\nAlice->>Bob: three<br>lines<br>here\nBob->>Bob: loopy\nNote over Alice: noted\nloop again\nBob->>Alice: inside\nend\n";
+    #[rstest]
+    #[case::success_click_participant(MOUSE_SOURCE, "Bob", 0, Selection::Participant(1))]
+    #[case::success_click_box(MOUSE_SOURCE, "Team", 0, Selection::Box(0))]
+    #[case::success_click_event_label(MOUSE_SOURCE, "three", 0, Selection::Event(0))]
+    // arrow row below the last label line
+    #[case::success_click_event_arrow_row(MOUSE_SOURCE, "here", 1, Selection::Event(0))]
+    // bottom row of the self-loop is one row below its label
+    #[case::success_click_self_loop_bottom_row(MOUSE_SOURCE, "loopy", 1, Selection::Event(1))]
+    #[case::success_click_note(MOUSE_SOURCE, "noted", 0, Selection::Event(2))]
+    #[case::success_click_frame_header(SECTION_SOURCE, "┌ alt", 0, Selection::Fragment(0))]
+    // footer: label row, arrow row, blank row, then the frame bottom
+    #[case::success_click_frame_footer(SECTION_SOURCE, "two", 3, Selection::Fragment(0))]
+    #[case::success_click_divider(SECTION_SOURCE, "├┄", 0, Selection::Section(0, 0))]
+    fn click_selects_the_item_under_the_pointer(
+        #[case] given_source: &str,
+        #[case] given_text: &str,
+        #[case] given_dy: u16,
+        #[case] expected_selection: Selection,
+    ) {
+        let mut world = world_from(given_source);
 
-    fn mouse_world() -> World {
-        let diagram = SequenceDiagram::from_mermaid(MOUSE_SOURCE).unwrap();
-        world_with(diagram, None)
-    }
+        click_text(&mut world, given_text, given_dy);
 
-    #[test]
-    fn click_selects_participant_and_box() {
-        let mut world = mouse_world();
-
-        click_text(&mut world, (60, 40), "Bob", 0);
-        assert_eq!(selection(&world), Selection::Participant(1));
-
-        click_text(&mut world, (60, 40), "Team", 0);
-        assert_eq!(selection(&world), Selection::Box(0));
-    }
-
-    #[test]
-    fn click_selects_every_row_of_a_message_and_a_note() {
-        let mut world = mouse_world();
-
-        for text in ["three", "lines", "here"] {
-            click_text(&mut world, (60, 40), text, 0);
-            assert_eq!(selection(&world), Selection::Event(0), "{text}");
-            world.get_mut::<EditorState>().clear_selection();
-        }
-
-        // arrow row below the last label line
-        click_text(&mut world, (60, 40), "here", 1);
-        assert_eq!(selection(&world), Selection::Event(0));
-
-        // bottom row of the self-loop is two rows below its label
-        click_text(&mut world, (60, 40), "loopy", 1);
-        assert_eq!(selection(&world), Selection::Event(1));
-
-        click_text(&mut world, (60, 40), "noted", 0);
-        assert_eq!(selection(&world), Selection::Event(2));
-    }
-
-    #[test]
-    fn click_selects_frame_header_footer_and_divider() {
-        let mut world = world_with_selection(SECTION_SOURCE, Selection::None);
-
-        click_text(&mut world, (60, 20), "┌ alt", 0);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-
-        // footer: label row, arrow row, blank row, then the frame bottom
-        world.get_mut::<EditorState>().clear_selection();
-        click_text(&mut world, (60, 20), "two", 3);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-
-        click_text(&mut world, (60, 20), "├┄", 0);
-        assert_eq!(selection(&world), Selection::Section(0, 0));
+        assert_eq!(selection(&world), expected_selection);
     }
 
     #[test]
     fn click_on_empty_space_clears_and_border_or_status_bar_do_nothing() {
-        let mut world = mouse_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(1);
+        let mut world = world_with_selection(MOUSE_SOURCE, Selection::Event(1));
         draw(&mut world, 60, 40);
 
         click(&mut world, 0, 5);
@@ -5125,34 +4454,28 @@ mod tests {
         assert_eq!(selection(&world), Selection::None);
     }
 
-    #[test]
-    fn click_on_selected_item_edits_without_changing_the_diagram() {
-        let mut world = mouse_world();
-        let before = world.get::<SequenceDiagram>().clone();
+    #[rstest]
+    #[case::success_second_click_renames_participant("Bob", EditorMode::RenameParticipant)]
+    #[case::success_second_click_edits_event("three", EditorMode::EditSelectFrom)]
+    fn second_click_edits_on_release_without_changing_the_diagram(
+        #[case] given_text: &str,
+        #[case] expected_edit_mode: EditorMode,
+    ) {
+        let mut world = world_from(MOUSE_SOURCE);
+        let before = diagram_of(&world);
+        let buffer = draw(&mut world, MOUSE_SIZE.0, MOUSE_SIZE.1);
+        let (x, y) = find(&buffer, given_text);
 
-        click_text(&mut world, (60, 40), "Bob", 0);
-        click_text(&mut world, (60, 40), "Bob", 0);
-        assert_eq!(
-            world.get::<EditorState>().mode,
-            EditorMode::RenameParticipant
-        );
-        press(&mut world, KeyCode::Esc);
+        click_release(&mut world, x, y);
+        assert_eq!(mode(&world), EditorMode::Normal);
 
-        click_text(&mut world, (60, 40), "three", 0);
-        click_text(&mut world, (60, 40), "three", 0);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::EditSelectFrom);
+        click(&mut world, x, y);
+        assert_eq!(mode(&world), EditorMode::Normal);
+        release(&mut world, x, y);
+        assert_eq!(mode(&world), expected_edit_mode);
 
-        assert!(*world.get::<SequenceDiagram>() == before);
+        assert_eq!(diagram_of(&world), before);
         assert_eq!(undo_len(&world), 0);
-    }
-
-    fn many_messages_world(count: usize) -> World {
-        let messages = (0..count)
-            .map(|i| format!("Alice->>Bob: msg{i:02}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let source = format!("sequenceDiagram\nparticipant Alice\nparticipant Bob\n{messages}\n");
-        world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None)
     }
 
     #[test]
@@ -5164,39 +4487,63 @@ mod tests {
 
         let (x, y) = find(&buffer, "msg18");
         click(&mut world, x, y);
+
         assert_eq!(selection(&world), Selection::Event(18));
     }
 
     #[test]
     fn click_after_horizontal_scroll_hits_the_right_header() {
-        let participants = (0..8)
-            .map(|i| format!("participant Participant{i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let source = format!("sequenceDiagram\n{participants}\nParticipant0->>Participant7: hi\n");
-        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        let mut world = wide_world("");
         world.get_mut::<EditorState>().selection = Selection::Participant(7);
-
         let buffer = draw(&mut world, 80, 20);
-        assert!(world.get::<ScrollState>().x_offset > 0);
-        let (x, y) = find(&buffer, "Participant7");
-        click_release(&mut world, x, y);
-        // already selected, so the click starts editing
-        assert_eq!(
-            world.get::<EditorState>().mode,
-            EditorMode::RenameParticipant
-        );
-        press(&mut world, KeyCode::Esc);
+        assert!(x_offset(&world) > 0);
 
         world.get_mut::<EditorState>().clear_selection();
-        let buffer = draw(&mut world, 80, 20);
-        let first_visible = (0..8)
+        let first_visible = (1..=8)
             .find(|i| screen_text(&buffer).contains(&format!("Participant{i}")))
             .unwrap();
-        assert!(first_visible > 0);
+        assert!(first_visible > 1);
         let (x, y) = find(&buffer, &format!("Participant{first_visible}"));
         click(&mut world, x, y);
-        assert_eq!(selection(&world), Selection::Participant(first_visible));
+
+        assert_eq!(selection(&world), Selection::Participant(first_visible - 1));
+    }
+
+    #[test]
+    fn click_on_wide_message_keeps_x_offset() {
+        let mut world = wide_world("Participant1->>Participant8: wide\n");
+        world.get_mut::<EditorState>().selection = Selection::Participant(7);
+        let buffer = draw(&mut world, 80, 20);
+        let offset = x_offset(&world);
+        assert!(offset > 0);
+
+        // right end of the arrow, which the selection would scroll toward the left
+        let (x, y) = find(&buffer, "▶");
+        click(&mut world, x, y);
+        assert_eq!(selection(&world), Selection::Event(0));
+        draw(&mut world, 80, 20);
+
+        assert_eq!(x_offset(&world), offset);
+    }
+
+    #[test]
+    fn click_on_frame_footer_does_not_scroll_and_second_click_edits() {
+        let messages = messages(20);
+        let source =
+            format!("sequenceDiagram\nparticipant Alice\nparticipant Bob\nloop x\n{messages}end\n");
+        let mut world = world_from(&source);
+        press_char(&mut world, 'G');
+        let buffer = draw(&mut world, 40, 16);
+        let offset = world.get::<ScrollState>().offset;
+        let (x, y) = find(&buffer, "msg19");
+
+        click_release(&mut world, x, y + 3);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+        draw(&mut world, 40, 16);
+        assert_eq!(world.get::<ScrollState>().offset, offset);
+
+        click_release(&mut world, x, y + 3);
+        assert_eq!(mode(&world), EditorMode::SelectFrameKind);
     }
 
     #[test]
@@ -5227,185 +4574,98 @@ mod tests {
 
     #[test]
     fn shift_wheel_and_horizontal_wheel_scroll_sideways_clamped() {
-        let participants = (0..8)
-            .map(|i| format!("participant Participant{i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let source = format!("sequenceDiagram\n{participants}\n");
-        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        let mut world = wide_world("");
         draw(&mut world, 60, 12);
 
         wheel(&mut world, MouseEventKind::ScrollDown, KeyModifiers::SHIFT);
         draw(&mut world, 60, 12);
-        assert_eq!(world.get::<ScrollState>().x_offset, 4);
+        assert_eq!(x_offset(&world), 4);
 
         wheel(&mut world, MouseEventKind::ScrollRight, KeyModifiers::NONE);
         draw(&mut world, 60, 12);
-        assert_eq!(world.get::<ScrollState>().x_offset, 8);
+        assert_eq!(x_offset(&world), 8);
 
         for _ in 0..100 {
             wheel(&mut world, MouseEventKind::ScrollRight, KeyModifiers::NONE);
         }
         draw(&mut world, 60, 12);
-        let max = world.get::<ScrollState>().x_offset;
+        let max = x_offset(&world);
         assert!(max > 8 && max < 400);
 
         wheel(&mut world, MouseEventKind::ScrollUp, KeyModifiers::SHIFT);
-        assert_eq!(world.get::<ScrollState>().x_offset, max - 4);
+        assert_eq!(x_offset(&world), max - 4);
     }
 
-    #[test]
-    fn click_in_message_picker_chooses_and_confirms() {
-        let mut world = sample_world();
-        press_char(&mut world, 'm');
+    #[rstest]
+    #[case::success_pick_message_sender("m", "  B", |e: &EditorState| e.message_from == Some(1) && e.mode == EditorMode::SelectTo)]
+    #[case::success_pick_box_color("b\n", "Green", |e: &EditorState| e.box_color == BoxColor::Green && e.mode == EditorMode::InputBoxLabel)]
+    #[case::success_pick_frame_kind("f\n", "alt", |e: &EditorState| e.frame_kind == FragmentKind::Alt && e.mode == EditorMode::InputFrameLabel)]
+    #[case::success_pick_note_position("n\n", "Over", |e: &EditorState| e.note_position == NotePosition::Over && e.mode != EditorMode::SelectNotePosition)]
+    fn click_in_picker_chooses_and_confirms(
+        #[case] given_pressed: &str,
+        #[case] given_option: &str,
+        #[case] expected_chosen: fn(&EditorState) -> bool,
+    ) {
+        let mut world = world_with_selection(SAMPLE, Selection::Event(0));
+        keys(&mut world, given_pressed);
 
-        click_text(&mut world, (60, 24), "  B", 0);
-        assert_eq!(world.get::<EditorState>().message_from, Some(1));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectTo);
-    }
+        click_text(&mut world, given_option, 0);
 
-    #[test]
-    fn click_in_note_position_picker_chooses_over() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().mode = EditorMode::SelectNotePosition;
-        world.get_mut::<EditorState>().note_participant_start = Some(0);
-
-        click_text(&mut world, (60, 24), "Over", 0);
-        assert_eq!(world.get::<EditorState>().note_position, NotePosition::Over);
-        assert_ne!(
-            world.get::<EditorState>().mode,
-            EditorMode::SelectNotePosition
-        );
-    }
-
-    #[test]
-    fn click_in_box_color_picker_chooses_green() {
-        let mut world = sample_world();
-        press_char(&mut world, 'b');
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
-
-        click_text(&mut world, (60, 24), "Green", 0);
-        assert_eq!(world.get::<EditorState>().box_color, BoxColor::Green);
-        assert_ne!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
-    }
-
-    #[test]
-    fn click_in_frame_kind_picker_chooses_alt() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Event(0);
-        press_char(&mut world, 'f');
-        press(&mut world, KeyCode::Enter);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
-
-        click_text(&mut world, (60, 24), "alt", 0);
-        assert_eq!(world.get::<SequenceDiagram>().fragments.len(), 0);
-        assert_eq!(world.get::<EditorState>().frame_kind, FragmentKind::Alt);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::InputFrameLabel);
+        assert!(expected_chosen(world.get::<EditorState>()));
+        assert_eq!(frames(&world).len(), 0);
     }
 
     #[test]
     fn mouse_is_limited_by_mode() {
         let mut world = sample_world();
         press_char(&mut world, 'm');
-        let picker_state = (
-            world.get::<EditorState>().mode.clone(),
-            world.get::<EditorState>().selected_index,
-        );
+        let picker_state = (mode(&world), world.get::<EditorState>().selected_index);
 
         draw(&mut world, 60, 24);
         click(&mut world, 1, 1);
-        assert_eq!(
-            (
-                world.get::<EditorState>().mode.clone(),
-                world.get::<EditorState>().selected_index
-            ),
-            picker_state
-        );
+        let after = (mode(&world), world.get::<EditorState>().selected_index);
+        assert_eq!(after, picker_state);
         press(&mut world, KeyCode::Esc);
 
         press_char(&mut world, '?');
         draw(&mut world, 60, 24);
         click(&mut world, 1, 1);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(mode(&world), EditorMode::Normal);
     }
 
     #[test]
     fn click_during_box_end_moves_cursor_and_second_click_confirms() {
-        let mut world = sample_world();
-        world.get_mut::<EditorState>().selection = Selection::Participant(0);
+        let mut world = world_with_selection(SAMPLE, Selection::Participant(0));
         press_char(&mut world, 'b');
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
 
-        click_text(&mut world, (60, 24), "B", 0);
+        click_text(&mut world, "B", 0);
         assert_eq!(selection(&world), Selection::Participant(1));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
+        assert_eq!(mode(&world), EditorMode::SelectBoxEnd);
 
-        click_text(&mut world, (60, 24), "B", 0);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+        click_text(&mut world, "B", 0);
+        assert_eq!(mode(&world), EditorMode::SelectBoxColor);
     }
 
     #[test]
-    fn click_on_frame_footer_does_not_scroll_and_second_click_edits() {
-        let messages = (0..20)
-            .map(|i| format!("Alice->>Bob: msg{i:02}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let source = format!(
-            "sequenceDiagram\nparticipant Alice\nparticipant Bob\nloop x\n{messages}\nend\n"
-        );
-        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+    fn refresh_hit_areas_equals_the_areas_of_a_full_draw() {
+        let mut world = world_from(MOUSE_SOURCE);
+        draw(&mut world, 60, 40);
+        let drawn = world.get::<ScrollState>().hit_areas.clone();
+        assert!(drawn.len() > 3);
+
+        world.get_mut::<ScrollState>().hit_areas.clear();
+        refresh_hit_areas(&mut world);
+        assert_eq!(world.get::<ScrollState>().hit_areas, drawn);
+
+        let mut world = many_messages_world(30);
         press_char(&mut world, 'G');
-        let buffer = draw(&mut world, 40, 16);
-        let offset = world.get::<ScrollState>().offset;
-        let (x, y) = find(&buffer, "msg19");
+        draw(&mut world, 60, 16);
+        let drawn = world.get::<ScrollState>().hit_areas.clone();
 
-        click_release(&mut world, x, y + 3);
-        assert_eq!(selection(&world), Selection::Fragment(0));
-        draw(&mut world, 40, 16);
-        assert_eq!(world.get::<ScrollState>().offset, offset);
-
-        click_release(&mut world, x, y + 3);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
+        world.get_mut::<ScrollState>().hit_areas.clear();
+        refresh_hit_areas(&mut world);
+        assert_eq!(world.get::<ScrollState>().hit_areas, drawn);
     }
-
-    #[test]
-    fn click_on_wide_message_keeps_x_offset() {
-        let participants = (0..8)
-            .map(|i| format!("participant Participant{i}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let source =
-            format!("sequenceDiagram\n{participants}\nParticipant0->>Participant7: wide\n");
-        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
-        world.get_mut::<EditorState>().selection = Selection::Participant(7);
-        draw(&mut world, 80, 20);
-        let offset = world.get::<ScrollState>().x_offset;
-        assert!(offset > 0);
-
-        // right end of the arrow, which the selection would scroll toward the left
-        let buffer = draw(&mut world, 80, 20);
-        let (x, y) = find(&buffer, "▶");
-        assert!(y > 0);
-        click(&mut world, x, y);
-        assert_eq!(selection(&world), Selection::Event(0));
-        draw(&mut world, 80, 20);
-        assert_eq!(world.get::<ScrollState>().x_offset, offset);
-    }
-
-    #[test]
-    fn confirming_clear_resets_the_selection() {
-        let mut world = sample_world();
-        press_char(&mut world, 'G');
-        press_char(&mut world, 'C');
-        press_char(&mut world, 'y');
-
-        assert_eq!(selection(&world), Selection::None);
-    }
-
-    const DRAG_SIZE: (u16, u16) = (60, 40);
-
-    const DRAG_SOURCE: &str = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nAlice->>Bob: two\nAlice->>Bob: three\nAlice->>Bob: four\n";
 
     fn drag_world(source: &str, selection: Selection) -> World {
         let mut world = world_with_selection(source, selection);
@@ -5413,28 +4673,37 @@ mod tests {
         world
     }
 
-    /// The same item pressed with keys, drawn, to read target positions from.
-    fn keyed_world(source: &str, selection: Selection, keys: &str) -> World {
+    /// The same item moved with keys, drawn, to read target positions from.
+    fn keyed_world(source: &str, selection: Selection, pressed: &str) -> World {
         let mut world = world_with_selection(source, selection);
-        for key in keys.chars() {
-            press_char(&mut world, key);
-        }
+        keys(&mut world, pressed);
         draw(&mut world, DRAG_SIZE.0, DRAG_SIZE.1);
         world
     }
 
     /// Screen cell in the middle of the first area drawn for the selection.
     fn center_of(world: &World, selection: Selection) -> (u16, u16) {
-        let scroll = world.get::<ScrollState>();
-        let (rect, _) = scroll
-            .hit_areas
+        let rect = first_rect(world, selection);
+        let x_offset = world.get::<ScrollState>().x_offset;
+        (rect.x + rect.width / 2 - x_offset, rect.y + rect.height / 2)
+    }
+
+    fn first_rect(world: &World, selection: Selection) -> Rect {
+        let areas = &world.get::<ScrollState>().hit_areas;
+        let (rect, _) = areas
             .iter()
             .find(|(_, s)| *s == selection)
             .unwrap_or_else(|| panic!("{selection:?} is not drawn"));
-        (
-            rect.x + rect.width / 2 - scroll.x_offset,
-            rect.y + rect.height / 2,
-        )
+        *rect
+    }
+
+    fn frame_footer(world: &World) -> Rect {
+        let areas = &world.get::<ScrollState>().hit_areas;
+        let (rect, _) = areas
+            .iter()
+            .rfind(|(_, s)| *s == Selection::Fragment(0))
+            .unwrap();
+        *rect
     }
 
     fn drag_event(world: &mut World, size: (u16, u16), x: u16, y: u16) {
@@ -5460,7 +4729,6 @@ mod tests {
         }
     }
 
-    /// Press, drag along every cell and release.
     fn drag_item(world: &mut World, from: (u16, u16), to: (u16, u16)) {
         click(world, from.0, from.1);
         drag_path(world, DRAG_SIZE, from, to);
@@ -5468,54 +4736,74 @@ mod tests {
         draw(world, DRAG_SIZE.0, DRAG_SIZE.1);
     }
 
-    fn diagram_of(world: &World) -> String {
-        world.get::<SequenceDiagram>().to_mermaid()
-    }
+    #[rstest]
+    #[case::success_drag_event_down(DRAG_SOURCE, Selection::Event(0), "JJ", Selection::Event(2))]
+    #[case::success_drag_event_through_frame(
+        FRAME_DRAG_SOURCE,
+        Selection::Event(0),
+        "JJJJ",
+        Selection::Event(2)
+    )]
+    #[case::success_drag_frame_down(
+        "sequenceDiagram\nparticipant Alice\nparticipant Bob\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after1\nAlice->>Bob: after2\n",
+        Selection::Fragment(0),
+        "J",
+        Selection::Fragment(0)
+    )]
+    #[case::success_drag_divider_down(
+        "sequenceDiagram\nparticipant Alice\nparticipant Bob\nalt a\nAlice->>Bob: 1\nelse b\nAlice->>Bob: 2\nAlice->>Bob: 3\nend\n",
+        Selection::Section(0, 0),
+        "J",
+        Selection::Section(0, 0)
+    )]
+    #[case::success_drag_participant_right(
+        "sequenceDiagram\nparticipant Alice\nparticipant Bob\nparticipant Carol\nAlice->>Carol: hi\n",
+        Selection::Participant(0),
+        "LL",
+        Selection::Participant(2)
+    )]
+    #[case::success_drag_box_right(
+        "sequenceDiagram\nbox Blue\nparticipant Alice\nparticipant Bob\nend\nparticipant Carol\nparticipant Dave\nAlice->>Dave: hi\n",
+        Selection::Box(0),
+        "L",
+        Selection::Box(0)
+    )]
+    fn dragging_moves_the_item_like_its_shift_keys(
+        #[case] given_source: &str,
+        #[case] given_selected: Selection,
+        #[case] given_moves: &str,
+        #[case] expected_target: Selection,
+    ) {
+        let reference = keyed_world(given_source, given_selected, given_moves);
+        let mut world = drag_world(given_source, Selection::None);
+        let from = center_of(&world, given_selected);
+        let to = center_of(&reference, expected_target);
 
-    #[test]
-    fn dragging_an_event_down_two_slots_is_two_shift_j() {
-        let mut world = drag_world(DRAG_SOURCE, Selection::None);
-        let before = diagram_of(&world);
-        let reference = keyed_world(DRAG_SOURCE, Selection::Event(0), "JJ");
-
-        let from = center_of(&world, Selection::Event(0));
-        let to = center_of(&reference, Selection::Event(2));
         drag_item(&mut world, from, to);
 
         assert_eq!(diagram_of(&world), diagram_of(&reference));
-        assert_eq!(selection(&world), Selection::Event(2));
+        assert_eq!(selection(&world), expected_target);
         assert_eq!(undo_len(&world), 1);
-
-        press_char(&mut world, 'u');
-        assert_eq!(diagram_of(&world), before);
-        assert_eq!(selection(&world), Selection::None);
-        assert_eq!(undo_len(&world), 0);
     }
 
     #[test]
     fn dragging_across_a_frame_edge_enters_then_leaves_like_j() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
-        let mut world = drag_world(source, Selection::None);
-        let reference = keyed_world(source, Selection::Event(0), "JJJJ");
-
+        let reference = keyed_world(FRAME_DRAG_SOURCE, Selection::Event(0), "JJJJ");
+        let key_states: Vec<String> = (0..=4)
+            .map(|n| {
+                let moves = "J".repeat(n);
+                diagram_of(&keyed_world(FRAME_DRAG_SOURCE, Selection::Event(0), &moves))
+            })
+            .collect();
+        let mut world = drag_world(FRAME_DRAG_SOURCE, Selection::None);
         let from = center_of(&world, Selection::Event(0));
         let to = center_of(&reference, Selection::Event(2));
+
         click(&mut world, from.0, from.1);
-
-        let key_states: Vec<String> = (0..=4)
-            .map(|n| diagram_of(&keyed_world(source, Selection::Event(0), &"J".repeat(n))))
-            .collect();
-        assert!(key_states.contains(&diagram_of(&reference)));
-
         let (x, mut y) = from;
         while y < to.1 {
             y += 1;
             drag_event(&mut world, DRAG_SIZE, x, y);
-            eprintln!(
-                "DBG y={y} to={to:?} from={from:?} sel={:?} drag={}",
-                selection(&world),
-                world.get::<AppState>().drag.is_some()
-            );
             assert!(key_states.contains(&diagram_of(&world)));
         }
         release(&mut world, x, y);
@@ -5525,113 +4813,74 @@ mod tests {
     }
 
     #[test]
-    fn dragging_a_frame_by_header_or_footer_moves_it_like_j() {
+    fn dragging_a_frame_by_its_footer_moves_it_like_j() {
         let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after1\nAlice->>Bob: after2\n";
-        let frame = Selection::Fragment(0);
-
-        let reference = keyed_world(source, frame, "J");
+        let reference = keyed_world(source, Selection::Fragment(0), "J");
         let mut world = drag_world(source, Selection::None);
-        let from = center_of(&world, frame);
-        let to = center_of(&reference, frame);
-        drag_item(&mut world, from, to);
-        assert_eq!(diagram_of(&world), diagram_of(&reference));
-        assert_eq!(selection(&world), frame);
-
-        let mut world = drag_world(source, Selection::None);
-        let footer = world
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .rfind(|(_, s)| *s == frame)
-            .map(|(rect, _)| *rect)
-            .unwrap();
+        let footer = frame_footer(&world);
         let from = (footer.x + footer.width / 2, footer.y);
-        let moved_footer = reference
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .rfind(|(_, s)| *s == frame)
-            .map(|(rect, _)| *rect)
-            .unwrap();
-        let to = (from.0, moved_footer.y);
+        let to = (from.0, frame_footer(&reference).y);
+
         drag_item(&mut world, from, to);
+
         assert_eq!(diagram_of(&world), diagram_of(&reference));
     }
 
     #[test]
-    fn dragging_a_divider_down_one_slot_is_shift_j() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nalt a\nAlice->>Bob: 1\nelse b\nAlice->>Bob: 2\nAlice->>Bob: 3\nend\n";
-        let divider = Selection::Section(0, 0);
-        let reference = keyed_world(source, divider, "J");
-        let mut world = drag_world(source, Selection::None);
-
-        let from = center_of(&world, divider);
-        let to = center_of(&reference, divider);
-        drag_item(&mut world, from, to);
-
-        assert_eq!(diagram_of(&world), diagram_of(&reference));
-        assert_eq!(selection(&world), divider);
-    }
-
-    #[test]
-    fn dragging_a_participant_right_is_shift_l_twice() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nparticipant Carol\nAlice->>Carol: hi\n";
-        let reference = keyed_world(source, Selection::Participant(0), "LL");
-        let mut world = drag_world(source, Selection::None);
-
-        let from = center_of(&world, Selection::Participant(0));
-        let to = center_of(&reference, Selection::Participant(2));
-        drag_item(&mut world, from, to);
-
-        assert_eq!(participant_ids(&world), ["Bob", "Carol", "Alice"]);
-        assert_eq!(diagram_of(&world), diagram_of(&reference));
-        assert_eq!(selection(&world), Selection::Participant(2));
-        assert_eq!(undo_len(&world), 1);
-    }
-
-    #[test]
-    fn dragging_a_box_right_past_a_participant_is_shift_l() {
-        let source = "sequenceDiagram\nbox Blue\nparticipant Alice\nparticipant Bob\nend\nparticipant Carol\nparticipant Dave\nAlice->>Dave: hi\n";
-        let reference = keyed_world(source, Selection::Box(0), "L");
-        let mut world = drag_world(source, Selection::None);
-
-        let from = center_of(&world, Selection::Box(0));
-        let to = center_of(&reference, Selection::Box(0));
-        drag_item(&mut world, from, to);
-
-        assert_eq!(diagram_of(&world), diagram_of(&reference));
-        assert_eq!(selection(&world), Selection::Box(0));
-    }
-
-    #[test]
-    fn plain_click_changes_nothing_and_second_click_edits_on_release() {
-        let mut world = mouse_world();
+    fn drag_is_one_undo_step() {
+        let mut world = drag_world(DRAG_SOURCE, Selection::None);
         let before = diagram_of(&world);
-        let buffer = draw(&mut world, 60, 40);
-        let (x, y) = find(&buffer, "Bob");
+        let from = center_of(&world, Selection::Event(0));
+        let to = center_of(&world, Selection::Event(2));
 
-        click(&mut world, x, y);
-        release(&mut world, x, y);
-        assert_eq!(selection(&world), Selection::Participant(1));
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-
-        click(&mut world, x, y);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
-        release(&mut world, x, y);
-        assert_eq!(
-            world.get::<EditorState>().mode,
-            EditorMode::RenameParticipant
-        );
+        drag_item(&mut world, from, to);
+        press_char(&mut world, 'u');
 
         assert_eq!(diagram_of(&world), before);
+        assert_eq!(selection(&world), Selection::None);
         assert_eq!(undo_len(&world), 0);
     }
 
     #[test]
-    fn dragging_away_and_back_on_a_selected_item_does_not_edit() {
-        let mut world = drag_world(DRAG_SOURCE, Selection::Event(1));
-        let before = diagram_of(&world);
+    fn dragging_an_event_never_changes_its_arrow_direction() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nBob->>Alice: two\nAlice->>Bob: three\n";
+        let mut world = drag_world(source, Selection::None);
         let from = center_of(&world, Selection::Event(1));
+        let down = center_of(&world, Selection::Event(2));
+        let (left, right) = (from.0.saturating_sub(10), from.0 + 10);
+
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, (right, down.1));
+        drag_path(&mut world, DRAG_SIZE, (right, down.1), (left, from.1 - 2));
+        release(&mut world, left, from.1 - 2);
+
+        let diagram = world.get::<SequenceDiagram>();
+        let two = diagram.events.iter().find_map(|e| match e {
+            Event::Message { from, to, text, .. } if text == "two" => Some((*from, *to)),
+            _ => None,
+        });
+        assert_eq!(two, Some((1, 0)));
+    }
+
+    #[rstest]
+    #[case::success_drag_preselected_event_and_back(
+        DRAG_SOURCE,
+        Selection::Event(1),
+        Selection::Event(1)
+    )]
+    #[case::success_drag_unselected_event_and_back(
+        FRAME_DRAG_SOURCE,
+        Selection::None,
+        Selection::Event(0)
+    )]
+    fn dragging_away_and_back_restores_the_diagram_without_editing(
+        #[case] given_source: &str,
+        #[case] given_preselected: Selection,
+        #[case] given_grabbed: Selection,
+    ) {
+        let mut world = drag_world(given_source, given_preselected);
+        let before = diagram_of(&world);
+        let from = center_of(&world, given_grabbed);
         let away = (from.0, from.1 + 4);
 
         click(&mut world, from.0, from.1);
@@ -5641,7 +4890,7 @@ mod tests {
         release(&mut world, from.0, from.1);
 
         assert_eq!(diagram_of(&world), before);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(mode(&world), EditorMode::Normal);
         assert_eq!(undo_len(&world), 0);
     }
 
@@ -5654,7 +4903,7 @@ mod tests {
         drag_event(&mut world, DRAG_SIZE, 1, from.1);
         release(&mut world, 1, from.1);
 
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(mode(&world), EditorMode::Normal);
         assert_eq!(undo_len(&world), 0);
     }
 
@@ -5668,7 +4917,7 @@ mod tests {
         let mut changes = 0;
         let mut previous = before.clone();
         for step in 0..8 {
-            drag_event(&mut world, DRAG_SIZE, from.0, from.1 + 2 + (step % 2));
+            drag_event(&mut world, DRAG_SIZE, from.0, from.1 + 1 + (step % 2));
             let current = diagram_of(&world);
             if current != previous {
                 changes += 1;
@@ -5681,14 +4930,28 @@ mod tests {
     }
 
     #[test]
-    fn dragging_an_event_past_a_frame_and_all_the_way_back_returns_it() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
-        let mut world = drag_world(source, Selection::None);
+    fn dragging_an_event_to_the_frame_edge_and_back_returns_it_inside() {
+        let mut world = drag_world(TWO_SECTIONS, Selection::None);
         let before = diagram_of(&world);
-        let reference = keyed_world(source, Selection::Event(0), "JJJJ");
+        let from = center_of(&world, Selection::Event(0));
 
+        click(&mut world, from.0, from.1);
+        drag_path(&mut world, DRAG_SIZE, from, (from.0, 2));
+        assert_ne!(diagram_of(&world), before);
+        drag_path(&mut world, DRAG_SIZE, (from.0, 2), from);
+        release(&mut world, from.0, from.1);
+
+        assert_eq!(diagram_of(&world), before);
+    }
+
+    #[test]
+    fn dragging_an_event_past_a_frame_and_all_the_way_back_returns_it() {
+        let mut world = drag_world(FRAME_DRAG_SOURCE, Selection::None);
+        let before = diagram_of(&world);
+        let reference = keyed_world(FRAME_DRAG_SOURCE, Selection::Event(0), "JJJJ");
         let from = center_of(&world, Selection::Event(0));
         let far = center_of(&reference, Selection::Event(2));
+
         click(&mut world, from.0, from.1);
         drag_path(&mut world, DRAG_SIZE, from, far);
         assert_ne!(diagram_of(&world), before);
@@ -5700,51 +4963,21 @@ mod tests {
     }
 
     #[test]
-    fn reversing_inside_a_frame_works_once_the_pointer_travelled_back() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: out\nloop x\nAlice->>Bob: in\nend\nAlice->>Bob: after\n";
-        let mut world = drag_world(source, Selection::None);
-        let before = diagram_of(&world);
-        let from = center_of(&world, Selection::Event(0));
-
-        click(&mut world, from.0, from.1);
-        drag_path(&mut world, DRAG_SIZE, from, (from.0, from.1 + 4));
-        assert_ne!(diagram_of(&world), before);
-        drag_path(&mut world, DRAG_SIZE, (from.0, from.1 + 4), from);
-        release(&mut world, from.0, from.1);
-
-        assert_eq!(diagram_of(&world), before);
-    }
-
-    #[test]
     fn grabbing_a_footer_whose_header_is_scrolled_off_does_not_jump_to_the_header() {
-        let messages = (0..12)
-            .map(|i| format!("Alice->>Bob: m{i}\n"))
-            .collect::<Vec<_>>()
-            .concat();
+        let messages = messages(12);
         let source = format!(
             "sequenceDiagram\nparticipant Alice\nparticipant Bob\n{messages}loop x\nAlice->>Bob: e1\nAlice->>Bob: e2\nAlice->>Bob: e3\nend\n{messages}"
         );
-        let frame = Selection::Fragment(0);
-        let mut world = world_with_selection(&source, Selection::None);
+        let mut world = world_from(&source);
         let start = world.get::<SequenceDiagram>().fragments[0].start;
         world.get_mut::<ScrollState>().offset = start + 2;
         world.get_mut::<ScrollState>().follow = false;
         draw(&mut world, 60, 24);
 
-        let footer = world
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .rfind(|(_, s)| *s == frame)
-            .map(|(rect, _)| *rect)
-            .unwrap();
-        let frame_areas = world
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .filter(|(_, s)| *s == frame)
-            .count();
-        assert_eq!(frame_areas, 1);
+        let footer = frame_footer(&world);
+        let areas = &world.get::<ScrollState>().hit_areas;
+        let frame_areas = areas.iter().filter(|(_, s)| *s == Selection::Fragment(0));
+        assert_eq!(frame_areas.count(), 1);
         let x = footer.x + footer.width / 2;
         let top = world.get::<ScrollState>().diagram_area.y;
 
@@ -5757,61 +4990,11 @@ mod tests {
     }
 
     #[test]
-    fn grabbing_the_bottom_row_of_a_tall_message_and_wiggling_sideways_does_not_move() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nAlice->>Bob: a<br>b<br>c\nAlice->>Bob: three\n";
-        let mut world = drag_world(source, Selection::Event(1));
-        let before = diagram_of(&world);
-        let rect = world
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .find(|(_, s)| *s == Selection::Event(1))
-            .map(|(rect, _)| *rect)
-            .unwrap();
-        let (x, y) = (rect.x + rect.width / 2, rect.y + rect.height - 1);
-
-        click(&mut world, x, y);
-        drag_event(&mut world, DRAG_SIZE, x + 1, y);
-        release(&mut world, x + 1, y);
-
-        assert_eq!(diagram_of(&world), before);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::EditSelectFrom);
-    }
-
-    #[test]
-    fn grabbing_the_edge_of_a_wide_participant_and_wiggling_down_does_not_move() {
-        let source = "sequenceDiagram\nparticipant AVeryLongParticipantName\nparticipant Bob\nparticipant Carol\n";
-        let mut world = drag_world(source, Selection::None);
-        let before = diagram_of(&world);
-        let rect = world
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .find(|(_, s)| *s == Selection::Participant(0))
-            .map(|(rect, _)| *rect)
-            .unwrap();
-        let (x, y) = (rect.x + rect.width - 1, rect.y + 1);
-
-        click(&mut world, x, y);
-        drag_event(&mut world, DRAG_SIZE, x, y + 1);
-        drag_event(&mut world, DRAG_SIZE, x, y);
-
-        assert_eq!(diagram_of(&world), before);
-    }
-
-    #[test]
     fn grabbing_a_frame_by_the_footer_and_jumping_up_moves_it_up_only() {
         let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: b1\nAlice->>Bob: b2\nloop x\nAlice->>Bob: e1\nAlice->>Bob: e2\nAlice->>Bob: e3\nAlice->>Bob: e4\nend\n";
-        let frame = Selection::Fragment(0);
         let mut world = drag_world(source, Selection::None);
         let initial_start = world.get::<SequenceDiagram>().fragments[0].start;
-        let footer = world
-            .get::<ScrollState>()
-            .hit_areas
-            .iter()
-            .rfind(|(_, s)| *s == frame)
-            .map(|(rect, _)| *rect)
-            .unwrap();
+        let footer = frame_footer(&world);
         let x = footer.x + footer.width / 2;
         let upper_half = center_of(&world, Selection::Event(3)).1;
 
@@ -5820,7 +5003,38 @@ mod tests {
         release(&mut world, x, upper_half);
 
         assert!(world.get::<SequenceDiagram>().fragments[0].start < initial_start);
-        assert_eq!(selection(&world), frame);
+        assert_eq!(selection(&world), Selection::Fragment(0));
+    }
+
+    #[test]
+    fn grabbing_the_bottom_row_of_a_tall_message_and_wiggling_sideways_does_not_move() {
+        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nAlice->>Bob: a<br>b<br>c\nAlice->>Bob: three\n";
+        let mut world = drag_world(source, Selection::Event(1));
+        let before = diagram_of(&world);
+        let rect = first_rect(&world, Selection::Event(1));
+        let (x, y) = (rect.x + rect.width / 2, rect.y + rect.height - 1);
+
+        click(&mut world, x, y);
+        drag_event(&mut world, DRAG_SIZE, x + 1, y);
+        release(&mut world, x + 1, y);
+
+        assert_eq!(diagram_of(&world), before);
+        assert_eq!(mode(&world), EditorMode::EditSelectFrom);
+    }
+
+    #[test]
+    fn grabbing_the_edge_of_a_wide_participant_and_wiggling_down_does_not_move() {
+        let source = "sequenceDiagram\nparticipant AVeryLongParticipantName\nparticipant Bob\nparticipant Carol\n";
+        let mut world = drag_world(source, Selection::None);
+        let before = diagram_of(&world);
+        let rect = first_rect(&world, Selection::Participant(0));
+        let (x, y) = (rect.x + rect.width - 1, rect.y + 1);
+
+        click(&mut world, x, y);
+        drag_event(&mut world, DRAG_SIZE, x, y + 1);
+        drag_event(&mut world, DRAG_SIZE, x, y);
+
+        assert_eq!(diagram_of(&world), before);
     }
 
     #[test]
@@ -5842,7 +5056,7 @@ mod tests {
         drag_event(&mut world, DRAG_SIZE, to.0, to.1 + 2);
         release(&mut world, to.0, to.1 + 2);
         assert_eq!(diagram_of(&world), before);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(mode(&world), EditorMode::Normal);
         assert_eq!(undo_len(&world), 0);
     }
 
@@ -5863,7 +5077,7 @@ mod tests {
 
         release(&mut world, to.0, to.1);
         assert_eq!(undo_len(&world), 1);
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(mode(&world), EditorMode::Normal);
     }
 
     #[test]
@@ -5875,9 +5089,7 @@ mod tests {
         assert!(world.get::<ScrollState>().offset > 0);
 
         let mut reference = many_messages_world(30);
-        press_char(&mut reference, 'G');
-        press_char(&mut reference, 'K');
-        press_char(&mut reference, 'K');
+        keys(&mut reference, "GKK");
         draw(&mut reference, size.0, size.1);
 
         let from = center_of(&world, Selection::Event(29));
@@ -5916,12 +5128,13 @@ mod tests {
     #[test]
     fn dragging_a_participant_works_after_horizontal_scroll() {
         let size = (80, 20);
-        let mut world = wide_world("Participant1->>Participant8: hi\n");
+        let source = "Participant1->>Participant8: hi\n";
+        let mut world = wide_world(source);
         world.get_mut::<EditorState>().selection = Selection::Participant(7);
         draw(&mut world, size.0, size.1);
         assert!(x_offset(&world) > 0);
 
-        let mut reference = wide_world("Participant1->>Participant8: hi\n");
+        let mut reference = wide_world(source);
         reference.get_mut::<EditorState>().selection = Selection::Participant(7);
         press_char(&mut reference, 'H');
         draw(&mut reference, size.0, size.1);
@@ -5948,64 +5161,18 @@ mod tests {
         let to = center_of(&world, Selection::Event(2));
 
         press_char(&mut world, 'm');
-        let mode = world.get::<EditorState>().mode.clone();
-        assert_ne!(mode, EditorMode::Normal);
+        let picker_mode = mode(&world);
+        assert_ne!(picker_mode, EditorMode::Normal);
         click(&mut world, from.0, from.1);
         drag_path(&mut world, DRAG_SIZE, from, to);
         release(&mut world, to.0, to.1);
         assert_eq!(diagram_of(&world), before);
-        assert_eq!(world.get::<EditorState>().mode, mode);
+        assert_eq!(mode(&world), picker_mode);
 
         let mut world = drag_world(DRAG_SOURCE, Selection::None);
         click(&mut world, from.0, from.1);
         world.get_mut::<EditorState>().mode = EditorMode::Help;
         drag_path(&mut world, DRAG_SIZE, from, to);
         assert_eq!(diagram_of(&world), before);
-    }
-
-    #[test]
-    fn dragging_an_event_never_changes_its_arrow_direction() {
-        let source = "sequenceDiagram\nparticipant Alice\nparticipant Bob\nAlice->>Bob: one\nBob->>Alice: two\nAlice->>Bob: three\n";
-        let mut world = drag_world(source, Selection::None);
-        let from = center_of(&world, Selection::Event(1));
-        let down = center_of(&world, Selection::Event(2));
-        let (left, right) = (from.0.saturating_sub(10), from.0 + 10);
-
-        click(&mut world, from.0, from.1);
-        drag_path(&mut world, DRAG_SIZE, from, (right, down.1));
-        drag_path(&mut world, DRAG_SIZE, (right, down.1), (left, from.1 - 2));
-        release(&mut world, left, from.1 - 2);
-
-        let diagram = world.get::<SequenceDiagram>();
-        let two = diagram
-            .events
-            .iter()
-            .find_map(|e| match e {
-                Event::Message { from, to, text, .. } if text == "two" => Some((*from, *to)),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(two, (1, 0));
-    }
-
-    #[test]
-    fn refresh_hit_areas_equals_the_areas_of_a_full_draw() {
-        let mut world = mouse_world();
-        draw(&mut world, 60, 40);
-        let drawn = world.get::<ScrollState>().hit_areas.clone();
-        assert!(drawn.len() > 3);
-
-        world.get_mut::<ScrollState>().hit_areas.clear();
-        refresh_hit_areas(&mut world);
-        assert_eq!(world.get::<ScrollState>().hit_areas, drawn);
-
-        let mut world = many_messages_world(30);
-        press_char(&mut world, 'G');
-        draw(&mut world, 60, 16);
-        let drawn = world.get::<ScrollState>().hit_areas.clone();
-
-        world.get_mut::<ScrollState>().hit_areas.clear();
-        refresh_hit_areas(&mut world);
-        assert_eq!(world.get::<ScrollState>().hit_areas, drawn);
     }
 }

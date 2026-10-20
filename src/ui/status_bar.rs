@@ -154,7 +154,6 @@ pub fn render_status_bar(
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// Shown while the frame or box being created would be rejected.
 fn overlap_warning(editor: &EditorState, diagram: &SequenceDiagram) -> Option<&'static str> {
     if let Some(range) = editor.frame_selection_range()
         && diagram.fragment_overlaps(*range.start(), *range.end())

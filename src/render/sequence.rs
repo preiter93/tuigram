@@ -32,19 +32,17 @@ const PREVIEW_BOX_LABEL: &str = "new box";
 const DIVIDER_LABEL_ROOM: u16 = 7;
 const PREVIEW_DASH: &str = "┄";
 
-/// What the frame or box being created adds to the drawing.
 enum Preview {
-    /// Index of the preview inserted into the drawn diagram.
+    /// Index of the new box or frame.
     Added(usize),
-    /// Existing frames or boxes the new one would collide with.
     Collides(Vec<usize>),
-    /// Frame and divider index of the divider inserted into the drawn diagram.
+    /// (frame index, divider index)
     Section(usize, usize),
 }
 
-/// Draws the diagram with the frame or box being created as if it already existed,
-/// so layout and scrolling match the final result. The preview lives in a clone that
-/// stands in for the real diagram only while drawing.
+/// The frame or box being created is drawn as if it already existed, so layout and
+/// scrolling match the final result. It lives in a clone that replaces the real diagram
+/// only while drawing.
 pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
     let editor = world.get::<EditorState>();
     if editor.frame_selection_range().is_none()
@@ -136,7 +134,7 @@ fn add_box_preview(editor: &EditorState, diagram: &mut SequenceDiagram) -> Optio
     Some(Preview::Added(idx))
 }
 
-/// The color is only chosen once the picker is reached.
+/// The colour is only chosen once the picker is reached.
 fn box_color_chosen(editor: &EditorState) -> bool {
     editor.mode != EditorMode::SelectBoxEnd
 }
@@ -236,7 +234,6 @@ fn render_diagram(
     render_scrollbar(f, area, world);
 }
 
-/// Canvas columns (inclusive) the selection covers, if it has any.
 fn selection_span(canvas: Rect, world: &World, positions: &[u16]) -> Option<(u16, u16)> {
     let diagram = world.get::<SequenceDiagram>();
 
@@ -264,7 +261,6 @@ fn selection_span(canvas: Rect, world: &World, positions: &[u16]) -> Option<(u16
     }
 }
 
-/// First and last canvas column (outside the border column) that has anything drawn.
 fn content_columns(buf: &Buffer) -> (u16, u16) {
     let area = buf.area;
     let is_blank = |x: u16| (area.top()..area.bottom()).all(|y| buf[(x, y)] == Cell::EMPTY);
@@ -317,7 +313,6 @@ fn render_scrollbar(f: &mut Frame, area: Rect, world: &World) {
     f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
-/// Copies the canvas columns shown inside the border, shifted left by `offset`.
 fn copy_visible_columns(f: &mut Frame, canvas: &Buffer, area: Rect, offset: u16) {
     let first = area.x + 1;
     let last = area.right().saturating_sub(1);
@@ -339,7 +334,6 @@ fn copy_visible_columns(f: &mut Frame, canvas: &Buffer, area: Rect, offset: u16)
     }
 }
 
-/// Lifeline x of every participant and the canvas width the diagram needs.
 fn participant_layout(area: Rect, diagram: &SequenceDiagram) -> (Vec<u16>, u16) {
     let count = diagram.participants.len();
     let gaps = column_gaps(diagram, area.width);
@@ -368,7 +362,7 @@ fn participant_layout(area: Rect, diagram: &SequenceDiagram) -> (Vec<u16>, u16) 
     (positions, canvas_width)
 }
 
-/// Minimum room left of every participant, plus one entry for the room right of the last.
+/// One entry per participant plus one for the room right of the last.
 fn column_gaps(diagram: &SequenceDiagram, max_gap: u16) -> Vec<u16> {
     let count = diagram.participants.len();
     let mut gaps = vec![0u16; count + 1];
@@ -450,7 +444,6 @@ fn column_gaps(diagram: &SequenceDiagram, max_gap: u16) -> Vec<u16> {
     gaps
 }
 
-/// Left edge and width of a participant's header box.
 fn header_span(area: Rect, center: u16, participant: &Participant) -> (u16, u16) {
     let width = text_width(&header_text(participant)) + 4;
     let x = center
@@ -559,7 +552,6 @@ fn box_spans(area: Rect, world: &World, positions: &[u16]) -> Vec<Option<(u16, u
     spans
 }
 
-/// Grows a span symmetrically so `╭─ label ─╮` fits, as far as the limits allow.
 fn widen_for_label(left: u16, right: u16, label: &str, lower: u16, upper: u16) -> (u16, u16) {
     if label.is_empty() {
         return (left, right);
@@ -740,7 +732,6 @@ fn render_lifelines(
             );
         }
 
-        // Show scroll indicators on lifelines
         if has_above {
             Paragraph::new("⋮").style(theme.muted).render(
                 Rect {
@@ -767,7 +758,6 @@ fn render_lifelines(
     }
 }
 
-/// Anchor row of every visible event, leaving room for frame header and divider rows.
 fn event_rows(world: &World, base_y: u16) -> Vec<(usize, u16)> {
     let diagram = world.get::<SequenceDiagram>();
     let visible_range = world.get::<ScrollState>().visible_range(diagram);
@@ -789,17 +779,14 @@ fn anchor_row(rows: &[(usize, u16)], idx: usize) -> Option<u16> {
     rows.iter().find(|(i, _)| *i == idx).map(|(_, y)| *y)
 }
 
-/// Row of the frame header or divider drawn above an event.
 fn header_row(rows: &[(usize, u16)], idx: usize) -> Option<u16> {
     anchor_row(rows, idx).map(|y| y - 2)
 }
 
-/// Row of the frame footer drawn below an event.
 fn footer_row(rows: &[(usize, u16)], diagram: &SequenceDiagram, idx: usize) -> Option<u16> {
     anchor_row(rows, idx).map(|y| y + diagram.events[idx].height() - 1)
 }
 
-/// Recomputes the hit areas for the current diagram and scroll position without drawing.
 pub fn refresh_hit_areas(world: &mut World) {
     let area = world.get::<ScrollState>().diagram_area;
     if area.is_empty() {
@@ -1008,7 +995,6 @@ fn divider_line(label: &str, width: u16, line_style: Style, label_style: Style) 
     ])
 }
 
-/// Left x, width and (possibly truncated) title of a frame, or None if it cannot fit.
 fn frame_bounds(
     area: Rect,
     diagram: &SequenceDiagram,
@@ -1041,7 +1027,6 @@ fn frame_bounds(
     Some((left, width, title))
 }
 
-/// Width a frame needs to show its widest divider label untruncated.
 fn divider_min_width(frame: &Fragment) -> u16 {
     let widest = frame.sections.iter().map(|(_, label)| text_width(label));
     widest
@@ -1293,7 +1278,6 @@ fn event_text(diagram: &SequenceDiagram, idx: usize) -> String {
     }
 }
 
-/// Left and right x (inclusive) of everything an event draws.
 fn event_extent(event: &Event, text: &str, participants: &[u16]) -> (u16, u16) {
     match event {
         Event::Message { from, to, .. } => {
@@ -1331,7 +1315,6 @@ fn message_text_start(start: u16, len: u16, text_width: u16) -> u16 {
     (start + len.div_ceil(2)).saturating_sub(text_width / 2)
 }
 
-/// Left x and width of a note, given the text width.
 fn note_span(position: NotePosition, start_x: u16, end_x: u16, text_width: u16) -> (u16, u16) {
     match position {
         NotePosition::Right => (start_x.saturating_add(2), text_width + 4),
@@ -1426,15 +1409,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn widest_line_drives_gap_width() {
-        let wide = "a much longer second line";
-        let (positions, _) = layout(
-            &format!("sequenceDiagram\nparticipant A\nparticipant B\nA->>B: hi<br/>{wide}\n"),
-            200,
-        );
+    fn gap_between_first_two_participants(text: &str, width: u16) -> u16 {
+        let source = format!("sequenceDiagram\nparticipant A\nparticipant B\nA->>B: {text}\n");
+        let (positions, _) = layout(&source, width);
+        positions[1] - positions[0]
+    }
 
-        assert!(positions[1] - positions[0] > text_width(wide));
+    #[test]
+    fn gap_fits_the_widest_line_of_a_multiline_label() {
+        let gap = gap_between_first_two_participants("hi<br/>a much longer second line", 200);
+
+        assert!(gap > text_width("a much longer second line"));
+    }
+
+    #[test]
+    fn gap_fits_a_long_label_even_in_a_narrow_terminal() {
+        let gap = gap_between_first_two_participants("a long label that needs room", 40);
+
+        assert!(gap > text_width("a long label that needs room"));
     }
 
     #[test]
@@ -1449,16 +1441,6 @@ mod tests {
 
         assert!(last + 2 + note + 4 < width);
         assert!(last + SELF_LOOP_WIDTH + text_width("loop back") < width);
-    }
-
-    #[test]
-    fn widened_message_label_has_blank_columns_on_both_sides() {
-        let source =
-            "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: a long label that needs room\n";
-        let (positions, _) = layout(source, 40);
-
-        let label = text_width("a long label that needs room");
-        assert!(positions[1] - positions[0] >= label + 4);
     }
 
     #[test]

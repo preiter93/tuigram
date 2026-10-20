@@ -76,7 +76,7 @@ impl ScrollState {
         self.x_offset = self.x_offset.saturating_add_signed(delta);
     }
 
-    /// The item drawn at a screen position, given the sideways scroll.
+    /// Applies the sideways scroll.
     pub fn selection_at(&self, x: u16, y: u16) -> Selection {
         let x = x.saturating_add(self.x_offset);
 
@@ -144,102 +144,62 @@ impl ScrollState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
-    fn diagram(with_frame: bool) -> SequenceDiagram {
-        let frame = if with_frame { "loop\n" } else { "" };
-        let end = if with_frame { "end\n" } else { "" };
-        let source = format!("sequenceDiagram\n{frame}A->>B: 1\n{end}A->>B: 2\nA->>B: 3\n");
-        SequenceDiagram::from_mermaid(&source).unwrap()
+    fn parse(body: &str) -> SequenceDiagram {
+        SequenceDiagram::from_mermaid(&format!("sequenceDiagram\n{body}\n")).unwrap()
+    }
+
+    #[rstest]
+    #[case::success_plain_events_all_fit("A->>B: 1\nA->>B: 2\nA->>B: 3", HEADER_HEIGHT + 1 + 9, 0..3)]
+    #[case::success_frame_rows_reduce_range("loop\nA->>B: 1\nend\nA->>B: 2\nA->>B: 3", HEADER_HEIGHT + 1 + 9, 0..2)]
+    #[case::success_frame_footer_rows_reduce_range("loop\nA->>B: 1\nA->>B: 2\nend\nA->>B: 3", HEADER_HEIGHT + 1 + 8, 0..2)]
+    #[case::success_divider_row_reduces_range("alt\nA->>B: 1\nelse\nA->>B: 2\nend\nA->>B: 3", HEADER_HEIGHT + 1 + 8, 0..1)]
+    #[case::success_tall_event_reduces_range("A->>B: a<br>b<br>c\nA->>B: 2\nA->>B: 3", HEADER_HEIGHT + 1 + 9, 0..2)]
+    // an event taller than the viewport is still drawn, clipped
+    #[case::success_event_taller_than_viewport_still_drawn("A->>B: a<br>b<br>c<br>d", 3, 0..1)]
+    fn visible_range_counts_event_frame_and_divider_rows(
+        #[case] given_body: &str,
+        #[case] given_viewport: u16,
+        #[case] expected_range: std::ops::Range<usize>,
+    ) {
+        let mut scroll = ScrollState::new();
+        scroll.set_viewport(given_viewport);
+
+        assert_eq!(scroll.visible_range(&parse(given_body)), expected_range);
     }
 
     #[test]
-    fn viewport_counts_frame_header_and_footer_rows() {
+    fn ensure_visible_accounts_for_tall_events() {
+        let d = parse("A->>B: a<br>b<br>c\nA->>B: 2\nA->>B: 3");
         let mut scroll = ScrollState::new();
         scroll.set_viewport(HEADER_HEIGHT + 1 + 9);
-
-        assert_eq!(scroll.visible_range(&diagram(false)), 0..3);
-        assert_eq!(scroll.visible_range(&diagram(true)), 0..2);
-    }
-
-    #[test]
-    fn viewport_counts_divider_rows() {
-        let source = |keyword: &str, divider: &str| {
-            format!("sequenceDiagram\n{keyword}\nA->>B: 1\n{divider}A->>B: 2\nend\nA->>B: 3\n")
-        };
-        let plain = SequenceDiagram::from_mermaid(&source("loop", "")).unwrap();
-        let divided = SequenceDiagram::from_mermaid(&source("alt", "else\n")).unwrap();
-        let mut scroll = ScrollState::new();
-        scroll.set_viewport(HEADER_HEIGHT + 1 + 8);
-
-        assert_eq!(scroll.visible_range(&plain), 0..2);
-        assert_eq!(scroll.visible_range(&divided), 0..1);
-    }
-
-    #[test]
-    fn tall_events_reduce_visible_range() {
-        let source = "sequenceDiagram\nA->>B: a<br>b<br>c\nA->>B: 2\nA->>B: 3\n";
-        let d = SequenceDiagram::from_mermaid(source).unwrap();
-        let mut scroll = ScrollState::new();
-        scroll.set_viewport(HEADER_HEIGHT + 1 + 9);
-
-        assert_eq!(scroll.visible_range(&d), 0..2);
 
         scroll.ensure_visible(2, &d);
+
         assert_eq!(scroll.visible_range(&d).start, 1);
     }
 
-    #[test]
-    fn event_taller_than_viewport_is_still_visible() {
-        let d =
-            SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: a<br>b<br>c<br>d\n").unwrap();
+    // visible columns are `x_offset + 1 ..= x_offset + width - 2`
+    #[rstest]
+    #[case::success_keeps_span(0, 10, 20, 100, 0)]
+    #[case::success_scrolls_right(0, 50, 60, 100, 22)]
+    #[case::success_scrolls_left(30, 10, 15, 100, 9)]
+    #[case::success_prefers_left_edge(5, 20, 90, 100, 19)]
+    #[case::success_clamps_to_max(50, 60, 65, 10, 10)]
+    fn follow_x_keeps_span_inside_border(
+        #[case] given_x_offset: u16,
+        #[case] given_start: u16,
+        #[case] given_end: u16,
+        #[case] given_max_offset: u16,
+        #[case] expected_x_offset: u16,
+    ) {
         let mut scroll = ScrollState::new();
-        scroll.set_viewport(3);
+        scroll.x_offset = given_x_offset;
 
-        assert_eq!(scroll.visible_range(&d), 0..1);
-    }
+        scroll.follow_x(given_start, given_end, 40, given_max_offset);
 
-    #[test]
-    fn follow_x_keeps_visible_span_in_place() {
-        let mut scroll = ScrollState::new();
-        scroll.follow_x(10, 20, 40, 100);
-
-        assert_eq!(scroll.x_offset, 0);
-    }
-
-    #[test]
-    fn follow_x_scrolls_right_until_span_ends_inside_border() {
-        let mut scroll = ScrollState::new();
-        scroll.follow_x(50, 60, 40, 100);
-
-        // visible columns are 23..=60
-        assert_eq!(scroll.x_offset, 22);
-    }
-
-    #[test]
-    fn follow_x_scrolls_left_until_span_starts_inside_border() {
-        let mut scroll = ScrollState::new();
-        scroll.x_offset = 30;
-        scroll.follow_x(10, 15, 40, 100);
-
-        assert_eq!(scroll.x_offset, 9);
-    }
-
-    #[test]
-    fn follow_x_prefers_left_edge_of_wide_span() {
-        let mut scroll = ScrollState::new();
-        scroll.x_offset = 5;
-        scroll.follow_x(20, 90, 40, 100);
-
-        assert_eq!(scroll.x_offset, 19);
-    }
-
-    #[test]
-    fn follow_x_clamps_to_max_offset() {
-        let mut scroll = ScrollState::new();
-        scroll.x_offset = 50;
-        scroll.follow_x(60, 65, 40, 10);
-
-        assert_eq!(scroll.x_offset, 10);
+        assert_eq!(scroll.x_offset, expected_x_offset);
     }
 
     fn tall_diagram() -> SequenceDiagram {

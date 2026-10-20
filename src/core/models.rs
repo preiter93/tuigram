@@ -1,4 +1,4 @@
-/// Color used for boxes without one of the named Mermaid colors.
+/// For boxes without a named Mermaid colour.
 pub const DEFAULT_BOX_COLOR: BoxColor = BoxColor::Gray;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -238,7 +238,6 @@ impl FragmentKind {
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 
-    /// Keyword of the line that starts a new section inside this kind of frame.
     pub fn divider(self) -> Option<&'static str> {
         match self {
             Self::Alt => Some("else"),
@@ -248,7 +247,6 @@ impl FragmentKind {
         }
     }
 
-    /// The kind whose sections are separated by `word`.
     pub fn with_divider(word: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.divider() == Some(word))
     }
@@ -277,7 +275,6 @@ impl Fragment {
         keyword_line(self.kind.as_mermaid_str(), &self.label)
     }
 
-    /// Keyword and label of the divider line at `sections[k]`.
     pub fn divider_source(&self, k: usize) -> Option<String> {
         let word = self.kind.divider()?;
         let (_, label) = self.sections.get(k)?;
@@ -293,7 +290,6 @@ impl Fragment {
         }
     }
 
-    /// Restores the section invariants after events were removed or moved.
     pub fn drop_empty_sections(&mut self) {
         let (start, end) = (self.start, self.end);
 
@@ -435,6 +431,7 @@ impl Participant {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     fn message(text: &str) -> Event {
         Event::Message {
@@ -454,23 +451,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn text_lines_split_on_break_tags() {
-        for text in ["a<br>b", "a<br/>b", "a<BR />b", "a <br/> b"] {
-            assert_eq!(text_lines(text), ["a", "b"], "{text}");
-        }
-    }
-
-    #[test]
-    fn text_lines_always_has_one_entry() {
-        assert_eq!(text_lines("x"), ["x"]);
-        assert_eq!(text_lines(""), [""]);
-    }
-
-    #[test]
-    fn text_lines_keep_other_tags_literal() {
-        assert_eq!(text_lines("a<bra>"), ["a<bra>"]);
-        assert_eq!(text_lines("1 < 2 <br> é"), ["1 < 2", "é"]);
+    #[rstest]
+    #[case::success_br_tag("a<br>b", &["a", "b"])]
+    #[case::success_self_closing_br_tag("a<br/>b", &["a", "b"])]
+    #[case::success_uppercase_br_tag_with_space("a<BR />b", &["a", "b"])]
+    #[case::success_br_tag_between_spaces("a <br/> b", &["a", "b"])]
+    #[case::success_text_without_break("x", &["x"])]
+    #[case::success_empty_text("", &[""])]
+    #[case::success_similar_tag_is_not_a_break("a<bra>", &["a<bra>"])]
+    #[case::success_non_ascii_text_with_angle_bracket("1 < 2 <br> é", &["1 < 2", "é"])]
+    fn text_lines_splits_only_break_tags(
+        #[case] given_text: &str,
+        #[case] expected_lines: &[&str],
+    ) {
+        assert_eq!(text_lines(given_text), expected_lines);
     }
 
     #[test]

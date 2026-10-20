@@ -175,7 +175,7 @@ impl EditorState {
         (status.created_at.elapsed() < visible_for).then_some(status)
     }
 
-    /// Aborts a flow; a create flow also gives back the selection from before it started.
+    /// Aborts a flow; a create flow also restores the selection from before it started.
     pub fn cancel(&mut self) {
         if self.box_start.is_some() || self.frame_start.is_some() || self.section_start.is_some() {
             self.selection = self.selection_before;
@@ -198,7 +198,6 @@ impl EditorState {
         }
     }
 
-    /// Participants a new box covers while it is being created, like the frame range.
     pub fn box_selection_range(&self) -> Option<RangeInclusive<usize>> {
         let start = self.box_start?;
         match (&self.mode, self.selection, self.box_end) {
