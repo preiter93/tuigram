@@ -65,6 +65,10 @@ const HELP_SECTIONS: &[HelpSection] = &[
                 description: "Edit selected",
             },
             HelpEntry {
+                keys: "Alt+Enter",
+                description: "Line break in text",
+            },
+            HelpEntry {
                 keys: "r",
                 description: "Rename selected",
             },
@@ -112,7 +116,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         entries: &[
             HelpEntry {
                 keys: "b",
-                description: "Add box",
+                description: "Add box (h/l to extend)",
             },
             HelpEntry {
                 keys: "B",
@@ -120,11 +124,15 @@ const HELP_SECTIONS: &[HelpSection] = &[
             },
             HelpEntry {
                 keys: "f",
-                description: "Add/edit frame at event",
+                description: "Add/edit frame (j/k)",
             },
             HelpEntry {
                 keys: "F",
                 description: "Remove frame",
+            },
+            HelpEntry {
+                keys: "s",
+                description: "Add section divider",
             },
         ],
     },
@@ -300,6 +308,7 @@ mod tests {
         assert!(screen.contains("Quit"));
         assert!(screen.contains("Toggle autonumber"));
         assert!(screen.contains("Remove frame"));
+        assert!(screen.contains("Add section divider"));
         assert!(screen.contains("g/G"));
     }
 }

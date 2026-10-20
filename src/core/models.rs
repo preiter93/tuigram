@@ -110,6 +110,45 @@ impl ArrowStyle {
     }
 }
 
+/// Lines are trimmed; the result always has at least one entry.
+pub fn text_lines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut line_start = 0;
+    let mut pos = 0;
+
+    while let Some(offset) = text[pos..].find('<') {
+        let tag_start = pos + offset;
+        match line_break_len(&text[tag_start..]) {
+            Some(len) => {
+                lines.push(text[line_start..tag_start].trim());
+                pos = tag_start + len;
+                line_start = pos;
+            }
+            None => pos = tag_start + 1,
+        }
+    }
+
+    lines.push(text[line_start..].trim());
+    lines
+}
+
+fn line_break_len(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    if bytes.len() < 3 || !bytes[..3].eq_ignore_ascii_case(b"<br") {
+        return None;
+    }
+
+    let mut len = 3;
+    while bytes.get(len).is_some_and(u8::is_ascii_whitespace) {
+        len += 1;
+    }
+    if bytes.get(len) == Some(&b'/') {
+        len += 1;
+    }
+
+    (bytes.get(len) == Some(&b'>')).then_some(len + 1)
+}
+
 #[derive(Clone, PartialEq)]
 pub enum Event {
     Message {
@@ -127,10 +166,17 @@ pub enum Event {
 }
 
 impl Event {
-    pub const fn height(&self) -> u16 {
+    pub fn text(&self) -> &str {
         match self {
-            Self::Message { .. } => 3,
-            Self::Note { .. } => 2,
+            Self::Message { text, .. } | Self::Note { text, .. } => text,
+        }
+    }
+
+    pub fn height(&self) -> u16 {
+        let lines = u16::try_from(text_lines(self.text()).len()).unwrap_or(u16::MAX);
+        match self {
+            Self::Message { .. } => lines.saturating_add(2),
+            Self::Note { .. } => lines.saturating_add(1),
         }
     }
 
@@ -150,18 +196,29 @@ impl Event {
 pub enum FragmentKind {
     #[default]
     Loop,
+    Alt,
     Opt,
+    Par,
     Break,
     Critical,
 }
 
 impl FragmentKind {
-    pub const ALL: [Self; 4] = [Self::Loop, Self::Opt, Self::Break, Self::Critical];
+    pub const ALL: [Self; 6] = [
+        Self::Loop,
+        Self::Alt,
+        Self::Opt,
+        Self::Par,
+        Self::Critical,
+        Self::Break,
+    ];
 
     pub fn as_mermaid_str(self) -> &'static str {
         match self {
             Self::Loop => "loop",
+            Self::Alt => "alt",
             Self::Opt => "opt",
+            Self::Par => "par",
             Self::Break => "break",
             Self::Critical => "critical",
         }
@@ -181,6 +238,21 @@ impl FragmentKind {
         Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 
+    /// Keyword of the line that starts a new section inside this kind of frame.
+    pub fn divider(self) -> Option<&'static str> {
+        match self {
+            Self::Alt => Some("else"),
+            Self::Par => Some("and"),
+            Self::Critical => Some("option"),
+            Self::Loop | Self::Opt | Self::Break => None,
+        }
+    }
+
+    /// The kind whose sections are separated by `word`.
+    pub fn with_divider(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.divider() == Some(word))
+    }
+
     pub fn split_header(line: &str) -> Option<(Self, String)> {
         let line = line.trim();
         let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
@@ -195,16 +267,58 @@ pub struct Fragment {
     pub label: String,
     pub start: usize,
     pub end: usize,
+    /// Dividers as (index of the first event below, label). Starts increase
+    /// strictly and each lies in `(start, end]`.
+    pub sections: Vec<(usize, String)>,
 }
 
 impl Fragment {
     pub fn header(&self) -> String {
-        let kind = self.kind.as_mermaid_str();
-        if self.label.is_empty() {
-            kind.to_string()
-        } else {
-            format!("{kind} {}", self.label)
+        keyword_line(self.kind.as_mermaid_str(), &self.label)
+    }
+
+    /// Keyword and label of the divider line at `sections[k]`.
+    pub fn divider_source(&self, k: usize) -> Option<String> {
+        let word = self.kind.divider()?;
+        let (_, label) = self.sections.get(k)?;
+        Some(keyword_line(word, label))
+    }
+
+    pub fn move_to(&mut self, start: usize) {
+        let old_start = self.start;
+        self.end = self.end - old_start + start;
+        self.start = start;
+        for (at, _) in &mut self.sections {
+            *at = *at - old_start + start;
         }
+    }
+
+    /// Restores the section invariants after events were removed or moved.
+    pub fn drop_empty_sections(&mut self) {
+        let (start, end) = (self.start, self.end);
+
+        while self.sections.first().is_some_and(|(at, _)| *at <= start) {
+            let (_, label) = self.sections.remove(0);
+            self.label = label;
+        }
+        self.sections.retain(|(at, _)| *at <= end);
+
+        let mut k = 1;
+        while k < self.sections.len() {
+            if self.sections[k - 1].0 >= self.sections[k].0 {
+                self.sections.remove(k - 1);
+            } else {
+                k += 1;
+            }
+        }
+    }
+}
+
+fn keyword_line(keyword: &str, label: &str) -> String {
+    if label.is_empty() {
+        keyword.to_string()
+    } else {
+        format!("{keyword} {label}")
     }
 }
 
@@ -315,5 +429,57 @@ impl Participant {
 
     pub fn display_name(&self) -> &str {
         self.label.as_deref().unwrap_or(&self.id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(text: &str) -> Event {
+        Event::Message {
+            from: 0,
+            to: 1,
+            text: text.to_string(),
+            style: ArrowStyle::default(),
+        }
+    }
+
+    fn note(text: &str) -> Event {
+        Event::Note {
+            position: NotePosition::Right,
+            participant_start: 0,
+            participant_end: 0,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn text_lines_split_on_break_tags() {
+        for text in ["a<br>b", "a<br/>b", "a<BR />b", "a <br/> b"] {
+            assert_eq!(text_lines(text), ["a", "b"], "{text}");
+        }
+    }
+
+    #[test]
+    fn text_lines_always_has_one_entry() {
+        assert_eq!(text_lines("x"), ["x"]);
+        assert_eq!(text_lines(""), [""]);
+    }
+
+    #[test]
+    fn text_lines_keep_other_tags_literal() {
+        assert_eq!(text_lines("a<bra>"), ["a<bra>"]);
+        assert_eq!(text_lines("1 < 2 <br> é"), ["1 < 2", "é"]);
+    }
+
+    #[test]
+    fn event_height_grows_with_lines() {
+        assert_eq!(message("a").height(), 3);
+        assert_eq!(message("a<br/>b").height(), 4);
+        assert_eq!(message("a<br/>b<br>c").height(), 5);
+        assert_eq!(note("a").height(), 2);
+        assert_eq!(note("a<br/>b").height(), 3);
+        assert_eq!(note("a<br/>b<br/>c").height(), 4);
     }
 }

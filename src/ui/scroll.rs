@@ -55,10 +55,15 @@ impl ScrollState {
 
         for i in self.offset..diagram.event_count() {
             let height = diagram.event_height(i);
-            if height_used + height > self.viewport_height {
+            if height_used.saturating_add(height) > self.viewport_height {
                 break;
             }
             height_used += height;
+            end += 1;
+        }
+
+        // An event taller than the viewport is still drawn, clipped.
+        if end == self.offset && self.offset < diagram.event_count() {
             end += 1;
         }
 
@@ -116,6 +121,43 @@ mod tests {
 
         assert_eq!(scroll.visible_range(&diagram(false)), 0..3);
         assert_eq!(scroll.visible_range(&diagram(true)), 0..2);
+    }
+
+    #[test]
+    fn viewport_counts_divider_rows() {
+        let source = |keyword: &str, divider: &str| {
+            format!("sequenceDiagram\n{keyword}\nA->>B: 1\n{divider}A->>B: 2\nend\nA->>B: 3\n")
+        };
+        let plain = SequenceDiagram::from_mermaid(&source("loop", "")).unwrap();
+        let divided = SequenceDiagram::from_mermaid(&source("alt", "else\n")).unwrap();
+        let mut scroll = ScrollState::new();
+        scroll.set_viewport(HEADER_HEIGHT + 1 + 8);
+
+        assert_eq!(scroll.visible_range(&plain), 0..2);
+        assert_eq!(scroll.visible_range(&divided), 0..1);
+    }
+
+    #[test]
+    fn tall_events_reduce_visible_range() {
+        let source = "sequenceDiagram\nA->>B: a<br>b<br>c\nA->>B: 2\nA->>B: 3\n";
+        let d = SequenceDiagram::from_mermaid(source).unwrap();
+        let mut scroll = ScrollState::new();
+        scroll.set_viewport(HEADER_HEIGHT + 1 + 9);
+
+        assert_eq!(scroll.visible_range(&d), 0..2);
+
+        scroll.ensure_visible(2, &d);
+        assert_eq!(scroll.visible_range(&d).start, 1);
+    }
+
+    #[test]
+    fn event_taller_than_viewport_is_still_visible() {
+        let d =
+            SequenceDiagram::from_mermaid("sequenceDiagram\nA->>B: a<br>b<br>c<br>d\n").unwrap();
+        let mut scroll = ScrollState::new();
+        scroll.set_viewport(3);
+
+        assert_eq!(scroll.visible_range(&d), 0..1);
     }
 
     #[test]

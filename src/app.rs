@@ -31,6 +31,7 @@ pub const TEXT_INPUT: WidgetId = WidgetId("TextInput");
 pub const SELECT_PARTICIPANT: WidgetId = WidgetId("SelectParticipant");
 pub const SELECT_POSITION: WidgetId = WidgetId("SelectPosition");
 pub const SELECT_BOX_COLOR: WidgetId = WidgetId("SelectBoxColor");
+pub const SELECT_BOX_END: WidgetId = WidgetId("SelectBoxEnd");
 pub const SELECT_FRAME_END: WidgetId = WidgetId("SelectFrameEnd");
 pub const SELECT_FRAME_KIND: WidgetId = WidgetId("SelectFrameKind");
 
@@ -80,6 +81,7 @@ pub fn setup_world(world: &mut World, diagram: SequenceDiagram, path: Option<Pat
     text_input_keybindings(world);
     confirm_keybindings(world);
     select_box_color_keybindings(world);
+    select_box_end_keybindings(world);
     select_frame_end_keybindings(world);
     select_frame_kind_keybindings(world);
 }
@@ -193,6 +195,17 @@ fn restore_diagram(
     let event_count = diagram.event_count();
     let fragment_count = diagram.fragments.len();
     let box_count = diagram.boxes.len();
+    let selection = match selection {
+        Selection::Section(frame_idx, k)
+            if diagram
+                .fragments
+                .get(frame_idx)
+                .is_none_or(|f| k >= f.sections.len()) =>
+        {
+            Selection::Fragment(frame_idx)
+        }
+        other => other,
+    };
     *world.get_mut::<SequenceDiagram>() = diagram;
 
     let editor = world.get_mut::<EditorState>();
@@ -254,10 +267,19 @@ fn start_insert(world: &mut World, mode: EditorMode, before: bool) {
         return;
     }
 
-    let (anchor, frame) = match world.get::<EditorState>().selection {
-        Selection::Event(idx) => (Some(idx), None),
-        Selection::Fragment(idx) => (None, Some(idx)),
-        _ => (None, None),
+    let diagram = world.get::<SequenceDiagram>();
+    let (anchor, frame, before) = match world.get::<EditorState>().selection {
+        Selection::Event(idx) => (Some(idx), None, before),
+        Selection::Fragment(idx) => (None, Some(idx), before),
+        // Below a divider is before its first event, above it after the last one of the section above.
+        Selection::Section(idx, k) => {
+            match diagram.fragments.get(idx).and_then(|f| f.sections.get(k)) {
+                Some((at, _)) if before => (Some(at - 1), None, false),
+                Some((at, _)) => (Some(*at), None, true),
+                None => (None, None, before),
+            }
+        }
+        _ => (None, None, before),
     };
     let editor = world.get_mut::<EditorState>();
     editor.mode = mode;
@@ -350,6 +372,7 @@ fn normal_keybindings(world: &mut World) {
             Selection::Fragment(idx) => {
                 remove_frame(world, idx);
             }
+            Selection::Section(idx, k) => remove_section(world, idx, k),
             Selection::Box(idx) => remove_selected_box(world, idx),
             Selection::None => {
                 let diagram = world.get_mut::<SequenceDiagram>();
@@ -377,6 +400,8 @@ fn normal_keybindings(world: &mut World) {
     });
 
     kb.bind(NORMAL, 'f', "Add/edit frame", start_frame);
+
+    kb.bind(NORMAL, 's', "Add section divider", start_section);
 
     kb.bind(NORMAL, 'F', "Remove frame", |world| {
         let selection = world.get::<EditorState>().selection;
@@ -437,7 +462,10 @@ fn normal_keybindings(world: &mut World) {
         let last_participant = editor.last_participant_index;
         let mut next = selection.up(diagram);
 
-        let leaves_diagram = matches!(selection, Selection::Event(_) | Selection::Fragment(_));
+        let leaves_diagram = matches!(
+            selection,
+            Selection::Event(_) | Selection::Fragment(_) | Selection::Section(..)
+        );
         if leaves_diagram
             && matches!(next, Selection::Participant(_))
             && let Some(idx) = last_participant
@@ -487,7 +515,7 @@ fn normal_keybindings(world: &mut World) {
                 }
                 Selection::Event(idx) => world.get_mut::<SequenceDiagram>().point_event_right(idx),
                 Selection::Box(idx) => move_selected_box(world, idx, true),
-                Selection::Fragment(_) | Selection::None => {}
+                Selection::Fragment(_) | Selection::Section(..) | Selection::None => {}
             }
         },
     );
@@ -568,6 +596,7 @@ fn normal_keybindings(world: &mut World) {
                     start_rename_participant(world, idx);
                 }
                 Selection::Fragment(_) => start_frame(world),
+                Selection::Section(idx, k) => start_section_edit(world, idx, k),
                 Selection::Box(idx) => start_box_edit(world, idx),
                 Selection::None => {}
             }
@@ -612,33 +641,13 @@ fn normal_keybindings(world: &mut World) {
                 start_rename_participant(world, idx);
             }
             Selection::Fragment(_) => start_frame(world),
+            Selection::Section(idx, k) => start_section_edit(world, idx, k),
             Selection::Box(idx) => start_box_edit(world, idx),
             Selection::None => {}
         }
     });
 
-    kb.bind(NORMAL, 'b', "Add box", |world| {
-        let participant_count = world.get::<SequenceDiagram>().participant_count();
-        if participant_count >= 1 {
-            let selection = world.get::<EditorState>().selection;
-            let box_start = match selection {
-                Selection::Box(idx) => world
-                    .get::<SequenceDiagram>()
-                    .boxes
-                    .get(idx)
-                    .map(|b| b.start),
-                _ => None,
-            };
-            let editor = world.get_mut::<EditorState>();
-            editor.mode = EditorMode::SelectBoxStart;
-            editor.selected_index = match selection {
-                Selection::Participant(idx) => idx,
-                _ => box_start.unwrap_or(0),
-            };
-            editor.box_start = None;
-            editor.box_end = None;
-        }
-    });
+    kb.bind(NORMAL, 'b', "Add box", start_box);
 
     kb.bind(NORMAL, 'C', "Clear diagram", |world| {
         let diagram = world.get::<SequenceDiagram>();
@@ -786,10 +795,22 @@ fn text_input_keybindings(world: &mut World) {
 
     kb.bind(
         TEXT_INPUT,
+        KeyBinding::new(KeyCode::Enter, KeyModifiers::ALT),
+        "Line break",
+        |world| {
+            let editor = world.get_mut::<EditorState>();
+            if editor.mode.is_message_text_input() {
+                editor.input_buffer.push_str("<br/>");
+            }
+        },
+    );
+
+    kb.bind(
+        TEXT_INPUT,
         KeyBinding::key(KeyCode::Esc),
         "Cancel",
         |world| {
-            world.get_mut::<EditorState>().reset();
+            world.get_mut::<EditorState>().cancel();
         },
     );
 
@@ -840,26 +861,84 @@ fn confirm_keybindings(world: &mut World) {
     });
 }
 
+fn start_box(world: &mut World) {
+    let selection = world.get::<EditorState>().selection;
+    let diagram = world.get::<SequenceDiagram>();
+    if diagram.participant_count() == 0 {
+        world
+            .get_mut::<EditorState>()
+            .set_error("Add a participant first (p)");
+        return;
+    }
+
+    let existing_box = match selection {
+        Selection::Box(idx) => Some(idx),
+        Selection::Participant(idx) => diagram.box_index_of(idx),
+        _ => None,
+    };
+    if let Some(idx) = existing_box {
+        world.get_mut::<EditorState>().selection = Selection::Box(idx);
+        start_box_edit(world, idx);
+        return;
+    }
+
+    let free = |i: &usize| diagram.box_index_of(*i).is_none();
+    let start = match selection {
+        Selection::Participant(idx) => Some(idx),
+        _ => (0..diagram.participant_count()).find(free),
+    };
+    let editor = world.get_mut::<EditorState>();
+    let Some(start) = start else {
+        editor.set_error("No free participants to box");
+        return;
+    };
+
+    editor.selection_before = selection;
+    editor.selection = Selection::Participant(start);
+    editor.box_start = Some(start);
+    editor.box_end = None;
+    editor.mode = EditorMode::SelectBoxEnd;
+}
+
 fn start_frame(world: &mut World) {
     let selection = world.get::<EditorState>().selection;
     let diagram = world.get::<SequenceDiagram>();
     let existing = selected_frame(diagram, selection).map(|i| diagram.fragments[i].clone());
+    let first_free = (0..diagram.event_count()).find(|&i| diagram.fragment_at(i).is_none());
+    let has_events = diagram.event_count() > 0;
     let editor = world.get_mut::<EditorState>();
 
     if let Some(fragment) = existing {
         editor.frame_kind = fragment.kind;
         editor.input_buffer = fragment.label;
         editor.mode = EditorMode::SelectFrameKind;
-    } else if let Selection::Event(idx) = selection {
-        editor.frame_start = Some(idx);
-        editor.mode = EditorMode::SelectFrameEnd;
+        return;
     }
+
+    let start = match selection {
+        Selection::Event(idx) => Some(idx),
+        _ => first_free,
+    };
+    let Some(start) = start else {
+        let message = if has_events {
+            "No free messages to frame"
+        } else {
+            "Add a message first (m)"
+        };
+        editor.set_error(message);
+        return;
+    };
+
+    editor.selection_before = selection;
+    editor.selection = Selection::Event(start);
+    editor.frame_start = Some(start);
+    editor.mode = EditorMode::SelectFrameEnd;
 }
 
 fn selected_frame(diagram: &SequenceDiagram, selection: Selection) -> Option<usize> {
     match selection {
         Selection::Event(idx) => diagram.fragment_at(idx),
-        Selection::Fragment(idx) => Some(idx),
+        Selection::Fragment(idx) | Selection::Section(idx, _) => Some(idx),
         _ => None,
     }
 }
@@ -873,10 +952,92 @@ fn remove_frame(world: &mut World, frame_idx: usize) {
     diagram.remove_fragment_at(frame_idx);
 
     let editor = world.get_mut::<EditorState>();
-    if let Selection::Fragment(_) = editor.selection {
+    if matches!(
+        editor.selection,
+        Selection::Fragment(_) | Selection::Section(..)
+    ) {
         editor.selection = Selection::Event(start);
     }
     editor.set_status("Frame removed");
+}
+
+fn start_section(world: &mut World) {
+    let selection = world.get::<EditorState>().selection;
+    let diagram = world.get::<SequenceDiagram>();
+    let target = section_target(diagram, selection);
+    let editor = world.get_mut::<EditorState>();
+
+    match target {
+        Ok(at) => {
+            editor.selection_before = selection;
+            editor.section_start = Some(at);
+            editor.input_buffer.clear();
+            editor.mode = EditorMode::InputSectionLabel;
+        }
+        Err(message) => editor.set_error(message),
+    }
+}
+
+/// The event a new divider would go above, or why there is none.
+fn section_target(diagram: &SequenceDiagram, selection: Selection) -> Result<usize, String> {
+    let idx = match selection {
+        Selection::Event(idx) => idx,
+        Selection::Section(frame_idx, k) => {
+            let section = diagram
+                .fragments
+                .get(frame_idx)
+                .and_then(|f| f.sections.get(k));
+            section.map_or(usize::MAX, |(at, _)| *at)
+        }
+        _ => return Err("Select an event inside alt, par or critical".to_string()),
+    };
+    let Some(frame_idx) = diagram.fragment_at(idx) else {
+        return Err("Select an event inside alt, par or critical".to_string());
+    };
+
+    let frame = &diagram.fragments[frame_idx];
+    if frame.kind.divider().is_none() {
+        return Err(format!("'{}' has no sections", frame.kind.as_mermaid_str()));
+    }
+    if idx == frame.start {
+        return Err("Pick an event below the frame's first one".to_string());
+    }
+    if diagram.section_at(idx).is_some() {
+        return Err("A section already starts here".to_string());
+    }
+    Ok(idx)
+}
+
+fn start_section_edit(world: &mut World, frame_idx: usize, k: usize) {
+    let label = world
+        .get::<SequenceDiagram>()
+        .fragments
+        .get(frame_idx)
+        .and_then(|f| f.sections.get(k))
+        .map(|(_, label)| label.clone());
+
+    if let Some(label) = label {
+        let editor = world.get_mut::<EditorState>();
+        editor.input_buffer = label;
+        editor.mode = EditorMode::InputSectionLabel;
+    }
+}
+
+fn remove_section(world: &mut World, frame_idx: usize, k: usize) {
+    let diagram = world.get_mut::<SequenceDiagram>();
+    let Some(frame) = diagram.fragments.get(frame_idx) else {
+        return;
+    };
+    let first_of_merged = if k == 0 {
+        frame.start
+    } else {
+        frame.sections[k - 1].0
+    };
+    diagram.remove_section(frame_idx, k);
+
+    let editor = world.get_mut::<EditorState>();
+    editor.selection = Selection::Event(first_of_merged);
+    editor.set_status("Section removed");
 }
 
 fn move_selection(world: &mut World, down: bool) {
@@ -885,6 +1046,11 @@ fn move_selection(world: &mut World, down: bool) {
         Selection::Fragment(idx) => {
             let new_idx = world.get_mut::<SequenceDiagram>().move_fragment(idx, down);
             world.get_mut::<EditorState>().selection = Selection::Fragment(new_idx);
+        }
+        Selection::Section(idx, k) => {
+            world
+                .get_mut::<SequenceDiagram>()
+                .move_section(idx, k, down);
         }
         _ => {}
     }
@@ -932,14 +1098,69 @@ fn start_box_edit(world: &mut World, idx: usize) {
 fn move_selected_event(world: &mut World, idx: usize, down: bool) {
     let diagram = world.get_mut::<SequenceDiagram>();
     let frames_before = diagram.fragments.len();
+    let sections_before = section_count(diagram);
     let new_idx = diagram.move_event(idx, down);
     let frame_removed = diagram.fragments.len() < frames_before;
+    let section_removed = section_count(diagram) < sections_before;
 
     let editor = world.get_mut::<EditorState>();
     editor.selection = Selection::Event(new_idx);
     if frame_removed {
         editor.set_status("Frame removed");
+    } else if section_removed {
+        editor.set_status("Section removed");
     }
+}
+
+fn section_count(diagram: &SequenceDiagram) -> usize {
+    diagram.fragments.iter().map(|f| f.sections.len()).sum()
+}
+
+fn select_box_end_keybindings(world: &mut World) {
+    let kb = world.get_mut::<Keybindings>();
+
+    kb.bind(
+        SELECT_BOX_END,
+        KeyBinding::key(KeyCode::Enter),
+        "Confirm",
+        handle_input_confirm,
+    );
+
+    kb.bind(
+        SELECT_BOX_END,
+        KeyBinding::key(KeyCode::Esc),
+        "Cancel",
+        |world| {
+            world.get_mut::<EditorState>().cancel();
+        },
+    );
+
+    kb.bind_many(
+        SELECT_BOX_END,
+        keys!['h', KeyCode::Left],
+        "Previous",
+        |world| {
+            let editor = world.get_mut::<EditorState>();
+            if let Selection::Participant(idx) = editor.selection {
+                editor.selection = Selection::Participant(idx.saturating_sub(1));
+            }
+        },
+    );
+
+    kb.bind_many(
+        SELECT_BOX_END,
+        keys!['l', KeyCode::Right],
+        "Next",
+        |world| {
+            let count = world.get::<SequenceDiagram>().participant_count();
+            let editor = world.get_mut::<EditorState>();
+            if let Selection::Participant(idx) = editor.selection
+                && idx + 1 < count
+            {
+                editor.selection = Selection::Participant(idx + 1);
+            }
+        },
+    );
 }
 
 fn select_frame_end_keybindings(world: &mut World) {
@@ -957,11 +1178,7 @@ fn select_frame_end_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Esc),
         "Cancel",
         |world| {
-            let editor = world.get_mut::<EditorState>();
-            if let Some(start) = editor.frame_start {
-                editor.selection = Selection::Event(start);
-            }
-            editor.reset();
+            world.get_mut::<EditorState>().cancel();
         },
     );
 
@@ -1008,7 +1225,7 @@ fn select_frame_kind_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Esc),
         "Cancel",
         |world| {
-            world.get_mut::<EditorState>().reset();
+            world.get_mut::<EditorState>().cancel();
         },
     );
 
@@ -1048,7 +1265,7 @@ fn select_box_color_keybindings(world: &mut World) {
         KeyBinding::key(KeyCode::Esc),
         "Cancel",
         |world| {
-            world.get_mut::<EditorState>().reset();
+            world.get_mut::<EditorState>().cancel();
         },
     );
 
@@ -1219,20 +1436,7 @@ fn handle_input_confirm(world: &mut World) {
         EditorMode::EditNoteText => {
             save_note_changes(world);
         }
-        EditorMode::SelectBoxStart => {
-            let selected = world.get::<EditorState>().selected_index;
-            let editor = world.get_mut::<EditorState>();
-            editor.box_start = Some(selected);
-            editor.mode = EditorMode::SelectBoxEnd;
-            editor.selected_index = selected;
-        }
-        EditorMode::SelectBoxEnd => {
-            let selected = world.get::<EditorState>().selected_index;
-            let editor = world.get_mut::<EditorState>();
-            editor.box_end = Some(selected);
-            editor.box_color = BoxColor::default();
-            editor.mode = EditorMode::SelectBoxColor;
-        }
+        EditorMode::SelectBoxEnd => confirm_box_end(world),
         EditorMode::SelectBoxColor => {
             let editor = world.get_mut::<EditorState>();
             editor.mode = EditorMode::InputBoxLabel;
@@ -1284,6 +1488,7 @@ fn handle_input_confirm(world: &mut World) {
             editor.mode = EditorMode::InputFrameLabel;
         }
         EditorMode::InputFrameLabel => confirm_frame_label(world),
+        EditorMode::InputSectionLabel => confirm_section_label(world),
         EditorMode::InputSavePath => {
             let input = world.get::<EditorState>().input_buffer.trim().to_string();
             world.get_mut::<EditorState>().reset();
@@ -1293,6 +1498,27 @@ fn handle_input_confirm(world: &mut World) {
         }
         _ => {}
     }
+}
+
+fn confirm_box_end(world: &mut World) {
+    let editor = world.get::<EditorState>();
+    let (Some(start), Selection::Participant(cursor)) = (editor.box_start, editor.selection) else {
+        world.get_mut::<EditorState>().reset();
+        return;
+    };
+    let (first, last) = (start.min(cursor), start.max(cursor));
+
+    let overlaps = world.get::<SequenceDiagram>().box_overlaps(first, last);
+    let editor = world.get_mut::<EditorState>();
+    if overlaps {
+        return;
+    }
+
+    editor.selection = Selection::Participant(first);
+    editor.box_start = Some(first);
+    editor.box_end = Some(last);
+    editor.box_color = BoxColor::default();
+    editor.mode = EditorMode::SelectBoxColor;
 }
 
 fn confirm_frame_end(world: &mut World) {
@@ -1308,9 +1534,6 @@ fn confirm_frame_end(world: &mut World) {
         .fragment_overlaps(first, last);
     let editor = world.get_mut::<EditorState>();
     if overlaps {
-        editor.selection = Selection::Event(start);
-        editor.reset();
-        editor.set_error("Frames cannot overlap");
         return;
     }
 
@@ -1331,8 +1554,7 @@ fn confirm_frame_label(world: &mut World) {
     let diagram = world.get_mut::<SequenceDiagram>();
     let (Some(start), Some(end)) = (editor_state.frame_start, editor_state.frame_end) else {
         if let Some(frame_idx) = selected_frame(diagram, editor_state.selection) {
-            diagram.fragments[frame_idx].kind = kind;
-            diagram.fragments[frame_idx].label = label;
+            change_frame(world, frame_idx, kind, label);
         }
         return;
     };
@@ -1341,6 +1563,50 @@ fn confirm_frame_label(world: &mut World) {
         world
             .get_mut::<EditorState>()
             .set_error("Frames cannot overlap");
+    }
+}
+
+/// Kinds without dividers can't keep their sections.
+fn change_frame(world: &mut World, frame_idx: usize, kind: FragmentKind, label: String) {
+    let frame = &mut world.get_mut::<SequenceDiagram>().fragments[frame_idx];
+    frame.kind = kind;
+    frame.label = label;
+
+    if kind.divider().is_some() || frame.sections.is_empty() {
+        return;
+    }
+    frame.sections.clear();
+
+    let editor = world.get_mut::<EditorState>();
+    if matches!(editor.selection, Selection::Section(..)) {
+        editor.selection = Selection::Fragment(frame_idx);
+    }
+    editor.set_status("Sections removed");
+}
+
+fn confirm_section_label(world: &mut World) {
+    let editor_state = world.get::<EditorState>().clone();
+    let label = editor_state.input_buffer.trim().to_string();
+    world.get_mut::<EditorState>().reset();
+
+    let diagram = world.get_mut::<SequenceDiagram>();
+    let Some(at) = editor_state.section_start else {
+        if let Selection::Section(frame_idx, k) = editor_state.selection
+            && let Some(section) = diagram
+                .fragments
+                .get_mut(frame_idx)
+                .and_then(|f| f.sections.get_mut(k))
+        {
+            section.1 = label;
+        }
+        return;
+    };
+
+    let Some(frame_idx) = diagram.fragment_at(at) else {
+        return;
+    };
+    if let Some(k) = diagram.add_section(frame_idx, at, label) {
+        world.get_mut::<EditorState>().selection = Selection::Section(frame_idx, k);
     }
 }
 
@@ -1442,6 +1708,7 @@ pub fn active_widgets(world: &World) -> Vec<WidgetId> {
         EditorMode::SelectBoxColor => vec![SELECT_BOX_COLOR],
         EditorMode::SelectFrameEnd => vec![SELECT_FRAME_END],
         EditorMode::SelectFrameKind => vec![SELECT_FRAME_KIND],
+        EditorMode::SelectBoxEnd => vec![SELECT_BOX_END],
         m if m.is_selecting_participant() => vec![SELECT_PARTICIPANT],
         m if m.is_text_input() => vec![TEXT_INPUT],
         _ => vec![],
@@ -1480,6 +1747,7 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         | EditorMode::EditNoteText
         | EditorMode::InputBoxLabel
         | EditorMode::InputFrameLabel
+        | EditorMode::InputSectionLabel
         | EditorMode::InputSavePath => {
             render_input_popup(frame, world);
         }
@@ -1504,16 +1772,13 @@ pub fn render(frame: &mut Frame, world: &mut World) {
         EditorMode::ConfirmClear | EditorMode::ConfirmQuit => {
             render_confirm_dialog(frame, world);
         }
-        EditorMode::SelectBoxStart | EditorMode::SelectBoxEnd => {
-            render_box_participant_selector(frame, area, world);
-        }
         EditorMode::SelectBoxColor => {
             render_box_color_selector(frame, area, world);
         }
         EditorMode::SelectFrameKind => {
             render_frame_kind_selector(frame, area, world);
         }
-        EditorMode::Normal | EditorMode::SelectFrameEnd => {}
+        EditorMode::Normal | EditorMode::SelectBoxEnd | EditorMode::SelectFrameEnd => {}
     }
 }
 
@@ -1767,67 +2032,6 @@ fn render_note_position_selector(frame: &mut Frame, area: Rect, world: &World) {
 
         frame.render_widget(
             Paragraph::new(format!("{prefix}{label}")).style(style),
-            Rect {
-                x: inner.x,
-                y,
-                width: inner.width,
-                height: 1,
-            },
-        );
-    }
-}
-
-fn render_box_participant_selector(frame: &mut Frame, area: Rect, world: &World) {
-    let editor = world.get::<EditorState>();
-    let diagram = world.get::<SequenceDiagram>();
-    let theme = world.get::<Theme>();
-
-    let participants = &diagram.participants;
-    let cursor = editor.selected_index;
-    let is_selecting_end = matches!(editor.mode, EditorMode::SelectBoxEnd);
-    let box_start = editor.box_start;
-
-    let popup_width = 40.min(area.width.saturating_sub(4));
-    let popup_height = (participants.len() as u16 + 4).min(area.height.saturating_sub(4));
-
-    let popup_area = centered_rect(popup_width, popup_height, area);
-
-    frame.render_widget(ratatui::widgets::Clear, popup_area);
-
-    let title = if is_selecting_end {
-        " Box: End Participant "
-    } else {
-        " Box: Start Participant "
-    };
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(theme.border);
-
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
-
-    for (i, participant) in participants.iter().enumerate() {
-        let name = participant.display_name();
-        if i as u16 >= inner.height {
-            break;
-        }
-
-        let y = inner.y + i as u16;
-        let is_cursor = cursor == i;
-        let is_start_marker = is_selecting_end && box_start == Some(i);
-
-        let prefix = if is_cursor { "\u{25b6} " } else { "  " };
-        let style = if is_cursor {
-            theme.selected
-        } else if is_start_marker {
-            theme.accent
-        } else {
-            theme.text
-        };
-
-        frame.render_widget(
-            Paragraph::new(format!("{prefix}{name}")).style(style),
             Rect {
                 x: inner.x,
                 y,
@@ -2386,22 +2590,22 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_box_reports_error() {
-        let mut world = sample_world();
-        world
-            .get_mut::<SequenceDiagram>()
-            .add_box(String::new(), BoxColor::Red, 0, 1);
+    fn overlapping_box_stays_in_end_mode() {
+        let mut world = sample_world_with_box();
+        world.get_mut::<EditorState>().selection = Selection::Participant(2);
 
         press_char(&mut world, 'b');
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
-        press(&mut world, KeyCode::Enter);
+        press_char(&mut world, 'h');
         press(&mut world, KeyCode::Enter);
 
-        let status = world.get::<EditorState>().get_status().unwrap();
-        assert!(status.is_error);
-        assert_eq!(status.text, "Boxes cannot overlap");
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert!(world.get::<EditorState>().get_status().is_none());
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
+        assert_eq!(world.get::<EditorState>().box_start, Some(2));
+        assert_eq!(selection(&world), Selection::Participant(1));
+
+        press_char(&mut world, 'l');
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
     }
 
     fn framed_world() -> World {
@@ -2425,6 +2629,7 @@ mod tests {
         press_char(world, 'f');
         press_char(world, 'j');
         press(world, KeyCode::Enter);
+        press_char(world, 'j');
         press_char(world, 'j');
         press(world, KeyCode::Enter);
         type_text(world, label);
@@ -2457,7 +2662,7 @@ mod tests {
 
         press_char(&mut world, 'f');
         assert_eq!(world.get::<EditorState>().frame_kind, FragmentKind::Opt);
-        press_char(&mut world, 'j');
+        press_char(&mut world, 'k');
         press(&mut world, KeyCode::Enter);
         assert_eq!(world.get::<EditorState>().input_buffer, "Retry");
         press(&mut world, KeyCode::Backspace);
@@ -2466,7 +2671,7 @@ mod tests {
 
         assert_eq!(
             frames(&world),
-            vec![(FragmentKind::Break, "RetrX".to_string(), 0, 1)]
+            vec![(FragmentKind::Alt, "RetrX".to_string(), 0, 1)]
         );
     }
 
@@ -2495,11 +2700,15 @@ mod tests {
         press_char(&mut world, 'j');
         press(&mut world, KeyCode::Enter);
 
-        let status = world.get::<EditorState>().get_status().unwrap();
-        assert!(status.is_error);
-        assert_eq!(status.text, "Frames cannot overlap");
-        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert!(world.get::<EditorState>().get_status().is_none());
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameEnd);
+        assert_eq!(world.get::<EditorState>().frame_start, Some(0));
+        assert_eq!(selection(&world), Selection::Event(1));
         assert_eq!(frames(&world).len(), 1);
+
+        press_char(&mut world, 'k');
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
     }
 
     #[test]
@@ -2644,6 +2853,126 @@ mod tests {
         assert_eq!(note.chars().nth(frame_right), Some('│'));
     }
 
+    fn rows_containing(screen: &[String], needle: &str) -> Vec<usize> {
+        screen
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.contains(needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    #[test]
+    fn alt_enter_does_nothing_in_label_and_path_prompts() {
+        let mut world = sample_world();
+        press_char(&mut world, 'p');
+        type_text(&mut world, "a");
+        handle_key(&mut world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(world.get::<EditorState>().input_buffer, "a");
+
+        let mut world = world_with(SequenceDiagram::new(), Some(PathBuf::from("a.mmd")));
+        press_char(&mut world, 'S');
+        handle_key(&mut world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(world.get::<EditorState>().input_buffer, "a.mmd");
+    }
+
+    #[test]
+    fn two_line_message_draws_arrow_below_both_lines() {
+        let screen = frame_screen(
+            "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: first<br/>second\n",
+            40,
+        );
+
+        let first = rows_containing(&screen, "first")[0];
+        let second = rows_containing(&screen, "second")[0];
+        let arrow = rows_containing(&screen, "▶")[0];
+
+        assert_eq!(second, first + 1);
+        assert_eq!(arrow, second + 1);
+    }
+
+    #[test]
+    fn two_line_right_note_is_one_reversed_block() {
+        let diagram = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nparticipant A\nNote right of A: top<br>longer line\n",
+        )
+        .unwrap();
+        let mut world = world_with(diagram, None);
+        let mut terminal = Terminal::new(TestBackend::new(40, 16)).unwrap();
+        terminal.draw(|frame| render(frame, &mut world)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let screen: Vec<String> = (0..16)
+            .map(|y| (0..40).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect();
+        let top = rows_containing(&screen, "top")[0];
+        let longer = rows_containing(&screen, "longer line")[0];
+        assert_eq!(longer, top + 1);
+
+        let x = col_of(&screen[longer], "longer line") as u16;
+        for y in [top as u16, longer as u16] {
+            let reversed = buffer[(x, y)]
+                .style()
+                .add_modifier
+                .contains(ratatui::style::Modifier::REVERSED);
+            assert!(reversed, "row {y}");
+        }
+    }
+
+    #[test]
+    fn two_line_self_message_wraps_both_labels() {
+        let screen = frame_screen("sequenceDiagram\nparticipant A\nA->>A: self<br>loop\n", 40);
+
+        let bottom = screen.iter().position(|r| r.contains('◀')).unwrap();
+        assert!(screen[bottom - 3].contains('┐'));
+        assert!(screen[bottom - 2].contains("│  │self"));
+        assert!(screen[bottom - 1].contains("│  │loop"));
+    }
+
+    #[test]
+    fn autonumber_prefixes_only_first_line() {
+        let screen = frame_screen(
+            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nA->>B: first<br/>second\n",
+            40,
+        );
+
+        let first = rows_containing(&screen, "1. first")[0];
+        assert!(screen[first + 1].contains("second"));
+        assert!(!screen[first + 1].contains("1."));
+    }
+
+    #[test]
+    fn frame_encloses_three_line_note() {
+        let screen = frame_screen(
+            "sequenceDiagram\nparticipant A\nloop\nNote over A: a<br/>b<br/>c\nend\n",
+            40,
+        );
+
+        let header = rows_containing(&screen, "┌ loop")[0];
+        let footer = rows_containing(&screen, "└")
+            .into_iter()
+            .find(|&r| r > header)
+            .unwrap();
+        let c_row = rows_containing(&screen, "c")
+            .into_iter()
+            .find(|&r| r > header)
+            .unwrap();
+
+        assert!(header < c_row && c_row < footer);
+        assert_eq!(footer - header, 5);
+    }
+
+    #[test]
+    fn alt_enter_inserts_line_break_in_text_input() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().mode = EditorMode::InputMessage;
+        type_text(&mut world, "a");
+        handle_key(&mut world, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        type_text(&mut world, "b");
+
+        assert_eq!(world.get::<EditorState>().input_buffer, "a<br/>b");
+    }
+
     #[test]
     fn frame_encloses_self_message_loop() {
         let screen = frame_screen(
@@ -2762,9 +3091,7 @@ mod tests {
             .get::<SequenceDiagram>()
             .events
             .iter()
-            .map(|e| match e {
-                Event::Message { text, .. } | Event::Note { text, .. } => text.clone(),
-            })
+            .map(|e| e.text().to_string())
             .collect()
     }
 
@@ -3484,5 +3811,772 @@ mod tests {
 
         assert!(frame_col < note_col, "{rows:#?}");
         assert!(note_row.chars().nth(frame_col) == Some('│'), "{rows:#?}");
+    }
+
+    fn draw(world: &mut World, width: u16, height: u16) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| render(frame, world)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn screen_text(buffer: &ratatui::buffer::Buffer) -> String {
+        buffer
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect()
+    }
+
+    fn status_line(world: &mut World) -> String {
+        let buffer = draw(world, 100, 24);
+        (0..100).map(|x| buffer[(x, 23)].symbol()).collect()
+    }
+
+    /// Style of the first cell showing `symbol`.
+    fn style_of(buffer: &ratatui::buffer::Buffer, symbol: &str) -> ratatui::style::Style {
+        let cell = buffer
+            .content()
+            .iter()
+            .find(|c| c.symbol() == symbol)
+            .unwrap_or_else(|| panic!("no {symbol} on screen"));
+        cell.style()
+    }
+
+    fn undo_len(world: &World) -> usize {
+        world.get::<AppState>().undo_stack.len()
+    }
+
+    #[test]
+    fn f_with_nothing_selected_starts_at_first_event() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::None;
+
+        press_char(&mut world, 'f');
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameEnd);
+        assert_eq!(world.get::<EditorState>().selection, Selection::Event(0));
+        assert_eq!(world.get::<EditorState>().frame_start, Some(0));
+    }
+
+    #[test]
+    fn f_with_participant_selected_starts_at_first_event() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+
+        press_char(&mut world, 'f');
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameEnd);
+        assert_eq!(world.get::<EditorState>().selection, Selection::Event(0));
+    }
+
+    #[test]
+    fn f_without_events_shows_error() {
+        let diagram = SequenceDiagram::from_mermaid("sequenceDiagram\n participant A\n").unwrap();
+        let mut world = world_with(diagram, None);
+        world.get_mut::<EditorState>().selection = Selection::None;
+
+        press_char(&mut world, 'f');
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(status(&world), "Add a message first (m)");
+    }
+
+    #[test]
+    fn frame_preview_is_drawn_while_selecting_and_gone_after_escape() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        let undo_before = undo_len(&world);
+        let diagram_before = world.get::<SequenceDiagram>().to_mermaid();
+
+        press_char(&mut world, 'f');
+        press_char(&mut world, 'j');
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(screen.contains("┌ new frame"), "{screen}");
+        assert!(screen.contains("└┄") && screen.contains("┄┘"));
+        assert_eq!(world.get::<SequenceDiagram>().fragments.len(), 0);
+
+        press(&mut world, KeyCode::Esc);
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(!screen.contains("new frame"));
+        assert!(!screen.contains("└┄"));
+        assert_eq!(world.get::<SequenceDiagram>().to_mermaid(), diagram_before);
+        assert!(!is_dirty(&world));
+        assert_eq!(undo_len(&world), undo_before);
+    }
+
+    #[test]
+    fn frame_preview_grows_with_cursor() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+
+        press_char(&mut world, 'f');
+        let one: Vec<String> = render_rows(&mut world, 80, 24);
+        press_char(&mut world, 'j');
+        let two: Vec<String> = render_rows(&mut world, 80, 24);
+
+        let footer = |rows: &[String]| rows.iter().position(|r| r.contains("└┄")).unwrap();
+        assert!(footer(&two) > footer(&one));
+    }
+
+    #[test]
+    fn frame_preview_over_existing_frame_marks_it_red_with_hint() {
+        let mut world = framed_world();
+        world.get_mut::<SequenceDiagram>().add_fragment(
+            FragmentKind::Loop,
+            "Mark".to_string(),
+            1,
+            1,
+        );
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        press_char(&mut world, 'f');
+
+        let ok = draw(&mut world, 100, 24);
+        assert_eq!(style_of(&ok, "M").fg, world.get::<Theme>().accent.fg);
+        assert!(!status_line(&mut world).contains("overlaps a frame"));
+
+        press_char(&mut world, 'j');
+        let buffer = draw(&mut world, 100, 24);
+
+        let error = world.get::<Theme>().error;
+        assert_eq!(style_of(&buffer, "M").fg, error.fg);
+        assert!(!screen_text(&buffer).contains("new frame"));
+        assert!(status_line(&mut world).contains("overlaps a frame"));
+    }
+
+    #[test]
+    fn frame_mode_hints() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+
+        press_char(&mut world, 'f');
+        assert!(
+            status_line(&mut world)
+                .contains("j/k: choose last message  Enter: pick kind  Esc: cancel")
+        );
+
+        press(&mut world, KeyCode::Enter);
+        assert!(status_line(&mut world).contains("j/k: kind  Enter: next (label)  Esc: cancel"));
+
+        press(&mut world, KeyCode::Enter);
+        let screen = screen_text(&draw(&mut world, 100, 24));
+        assert!(screen.contains("Label (optional, Enter to finish):"));
+    }
+
+    #[test]
+    fn b_without_participants_shows_error() {
+        let mut world = world_with(SequenceDiagram::new(), None);
+
+        press_char(&mut world, 'b');
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(status(&world), "Add a participant first (p)");
+    }
+
+    #[test]
+    fn b_starts_at_selected_participant_else_first() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+        press_char(&mut world, 'b');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxEnd);
+        assert_eq!(world.get::<EditorState>().box_start, Some(1));
+        assert_eq!(selection(&world), Selection::Participant(1));
+        press(&mut world, KeyCode::Esc);
+
+        world.get_mut::<EditorState>().selection = Selection::None;
+        press_char(&mut world, 'b');
+        assert_eq!(world.get::<EditorState>().box_start, Some(0));
+        assert_eq!(selection(&world), Selection::Participant(0));
+        press(&mut world, KeyCode::Esc);
+
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        press_char(&mut world, 'b');
+        assert_eq!(world.get::<EditorState>().box_start, Some(0));
+    }
+
+    #[test]
+    fn b_on_box_or_member_edits_that_box() {
+        let mut world = sample_world_with_box();
+        world.get_mut::<EditorState>().selection = Selection::Box(0);
+        press_char(&mut world, 'b');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+        assert_eq!(world.get::<EditorState>().box_start, None);
+        press(&mut world, KeyCode::Esc);
+
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+        press_char(&mut world, 'b');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectBoxColor);
+        assert_eq!(selection(&world), Selection::Box(0));
+    }
+
+    #[test]
+    fn b_with_nothing_selected_skips_boxed_participants() {
+        let mut world = sample_world_with_box();
+        world.get_mut::<EditorState>().selection = Selection::None;
+
+        press_char(&mut world, 'b');
+
+        assert_eq!(world.get::<EditorState>().box_start, Some(2));
+    }
+
+    #[test]
+    fn b_with_every_participant_boxed_shows_error() {
+        let mut world = sample_world();
+        world
+            .get_mut::<SequenceDiagram>()
+            .add_box(String::new(), BoxColor::Red, 0, 1);
+        world.get_mut::<EditorState>().selection = Selection::None;
+
+        press_char(&mut world, 'b');
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(status(&world), "No free participants to box");
+    }
+
+    #[test]
+    fn f_with_nothing_selected_skips_framed_events() {
+        let mut world = framed_world();
+        world
+            .get_mut::<SequenceDiagram>()
+            .add_fragment(FragmentKind::Loop, String::new(), 0, 1);
+        world.get_mut::<EditorState>().selection = Selection::None;
+
+        press_char(&mut world, 'f');
+        assert_eq!(world.get::<EditorState>().frame_start, Some(2));
+        press(&mut world, KeyCode::Esc);
+
+        world
+            .get_mut::<SequenceDiagram>()
+            .add_fragment(FragmentKind::Opt, String::new(), 2, 2);
+        press_char(&mut world, 'f');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(status(&world), "No free messages to frame");
+    }
+
+    #[test]
+    fn box_end_moves_only_with_h_and_l() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().selection = Selection::Participant(0);
+        press_char(&mut world, 'b');
+
+        press_char(&mut world, 'j');
+        press(&mut world, KeyCode::Down);
+        assert_eq!(selection(&world), Selection::Participant(0));
+
+        press_char(&mut world, 'l');
+        assert_eq!(selection(&world), Selection::Participant(1));
+        press_char(&mut world, 'l');
+        assert_eq!(selection(&world), Selection::Participant(1));
+        press(&mut world, KeyCode::Left);
+        assert_eq!(selection(&world), Selection::Participant(0));
+    }
+
+    #[test]
+    fn box_preview_grows_with_l_and_escape_restores_everything() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        let undo_before = undo_len(&world);
+        let diagram_before = world.get::<SequenceDiagram>().to_mermaid();
+
+        press_char(&mut world, 'b');
+        let one = render_rows(&mut world, 80, 24);
+        press_char(&mut world, 'l');
+        let two = render_rows(&mut world, 80, 24);
+        let buffer = draw(&mut world, 80, 24);
+        let screen = screen_text(&buffer);
+
+        let width = |rows: &[String]| {
+            let row = rows.iter().find(|r| r.contains("╭")).unwrap();
+            row.chars().filter(|&c| c == '┄' || c == '─').count()
+        };
+        assert!(width(&two) > width(&one));
+        assert!(screen.contains("new box"), "{screen}");
+        assert!(screen.contains("╰┄") && screen.contains("┄╯"));
+        assert_eq!(style_of(&buffer, "┄").fg, world.get::<Theme>().selected.fg);
+        assert_eq!(world.get::<SequenceDiagram>().boxes.len(), 0);
+
+        press(&mut world, KeyCode::Esc);
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(!screen.contains("new box"));
+        assert!(!screen.contains("╭┄"));
+        assert_eq!(selection(&world), Selection::Event(0));
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(world.get::<SequenceDiagram>().to_mermaid(), diagram_before);
+        assert!(!is_dirty(&world));
+        assert_eq!(undo_len(&world), undo_before);
+    }
+
+    #[test]
+    fn box_selection_renders_no_participant_popup() {
+        let mut world = sample_world();
+        press_char(&mut world, 'b');
+
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(!screen.contains("Box: "));
+    }
+
+    #[test]
+    fn box_range_overlapping_existing_boxes_keeps_them_drawn_in_red() {
+        let source = "sequenceDiagram\nparticipant A\nbox Aqua Mid\nparticipant B\nparticipant C\nend\nparticipant D\nA->>D: hi\n";
+        // Partial overlap from either side, and a range covering the whole box.
+        let cases = [(0, 'l', 1), (0, 'l', 3), (3, 'h', 1), (3, 'h', 3)];
+
+        for (start, key, steps) in cases {
+            let mut world = world_with(SequenceDiagram::from_mermaid(source).unwrap(), None);
+            world.get_mut::<EditorState>().selection = Selection::Participant(start);
+            press_char(&mut world, 'b');
+            for _ in 0..steps {
+                press_char(&mut world, key);
+            }
+
+            let buffer = draw(&mut world, 100, 24);
+            let screen = screen_text(&buffer);
+            assert!(screen.contains("Mid"), "{screen}");
+            assert!(!screen.contains("new box"), "{screen}");
+            assert_eq!(style_of(&buffer, "M").fg, world.get::<Theme>().error.fg);
+            assert!(status_line(&mut world).contains("overlaps a box"));
+        }
+    }
+
+    #[test]
+    fn box_end_hint() {
+        let mut world = sample_world();
+
+        press_char(&mut world, 'b');
+
+        assert!(
+            status_line(&mut world)
+                .contains("h/l: choose last participant  Enter: pick color  Esc: cancel")
+        );
+    }
+
+    #[test]
+    fn escape_after_f_restores_selection_from_before() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::Participant(1);
+
+        press_char(&mut world, 'f');
+        press_char(&mut world, 'j');
+        press(&mut world, KeyCode::Esc);
+
+        assert_eq!(selection(&world), Selection::Participant(1));
+    }
+
+    #[test]
+    fn box_end_scroll_follows_the_cursor_participant() {
+        let participants: Vec<String> = (0..10).map(|i| format!("participant Pp{i}")).collect();
+        let source = format!("sequenceDiagram\n{}\n", participants.join("\n"));
+        let mut world = world_with(SequenceDiagram::from_mermaid(&source).unwrap(), None);
+        world.get_mut::<EditorState>().selection = Selection::Participant(0);
+
+        press_char(&mut world, 'b');
+        for _ in 0..6 {
+            press_char(&mut world, 'l');
+            draw(&mut world, 60, 24);
+        }
+
+        let screen = screen_text(&draw(&mut world, 60, 24));
+        assert!(screen.contains("Pp6"), "{screen}");
+    }
+
+    #[test]
+    fn box_preview_follows_picker_color_and_label() {
+        let mut world = sample_world();
+        world.get_mut::<EditorState>().selection = Selection::Participant(0);
+        press_char(&mut world, 'b');
+        press_char(&mut world, 'l');
+        press(&mut world, KeyCode::Enter);
+
+        let before = draw(&mut world, 80, 24);
+        press_char(&mut world, 'j');
+        let after = draw(&mut world, 80, 24);
+        assert_ne!(style_of(&before, "╭").fg, style_of(&after, "╭").fg);
+        assert_eq!(
+            style_of(&after, "╭").fg,
+            Some(box_color(world.get::<EditorState>().box_color))
+        );
+        assert!(screen_text(&after).contains("╭┄ new box"));
+
+        press(&mut world, KeyCode::Enter);
+        type_text(&mut world, "Mine");
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("╭┄ Mine"), "{screen}");
+        assert!(!screen.contains("new box"));
+    }
+
+    #[test]
+    fn frame_preview_follows_picker_kind_and_label() {
+        let mut world = framed_world();
+        world.get_mut::<EditorState>().selection = Selection::Event(0);
+        press_char(&mut world, 'f');
+        press_char(&mut world, 'j');
+        press(&mut world, KeyCode::Enter);
+
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("┌ loop"), "{screen}");
+        press_char(&mut world, 'k');
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("┌ break"), "{screen}");
+
+        press(&mut world, KeyCode::Enter);
+        type_text(&mut world, "Why");
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("break [Why]"), "{screen}");
+    }
+
+    #[test]
+    fn escape_at_every_create_step_restores_selection() {
+        for steps in 0..3 {
+            let mut world = framed_world();
+            world.get_mut::<EditorState>().selection = Selection::Participant(1);
+            press_char(&mut world, 'f');
+            for _ in 0..steps {
+                press(&mut world, KeyCode::Enter);
+            }
+            press(&mut world, KeyCode::Esc);
+            assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+            assert_eq!(selection(&world), Selection::Participant(1));
+
+            world.get_mut::<EditorState>().selection = Selection::Event(2);
+            press_char(&mut world, 'b');
+            press_char(&mut world, 'l');
+            for _ in 0..steps {
+                press(&mut world, KeyCode::Enter);
+            }
+            press(&mut world, KeyCode::Esc);
+            assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+            assert_eq!(selection(&world), Selection::Event(2));
+        }
+    }
+
+    #[test]
+    fn overlapping_box_range_highlights_headers_in_accent() {
+        let mut world = sample_world_with_box();
+        world.get_mut::<EditorState>().selection = Selection::Participant(2);
+        press_char(&mut world, 'b');
+        press_char(&mut world, 'h');
+
+        let buffer = draw(&mut world, 100, 24);
+
+        // Header of C (start of the range, not the cursor) is accented.
+        assert_eq!(style_of(&buffer, "C").fg, world.get::<Theme>().accent.fg);
+    }
+
+    const SECTION_SOURCE: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: one\nelse expired\nB->>A: two\nend\n";
+    const THREE_EVENTS_IN_ALT: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: 1\nA->>B: 2\nA->>B: 3\nend\n";
+    const TWO_SECTIONS: &str = "sequenceDiagram\nparticipant A\nparticipant B\nalt ok\nA->>B: 1\nA->>B: 2\nelse b\nA->>B: 3\nA->>B: 4\nend\n";
+
+    fn world_with_selection(source: &str, selection: Selection) -> World {
+        let diagram = SequenceDiagram::from_mermaid(source).unwrap();
+        let mut world = world_with(diagram, None);
+        world.get_mut::<EditorState>().selection = selection;
+        world
+    }
+
+    fn sections(world: &World) -> Vec<(usize, String)> {
+        world.get::<SequenceDiagram>().fragments[0].sections.clone()
+    }
+
+    fn screen_row(buffer: &ratatui::buffer::Buffer, needle: &str) -> usize {
+        let width = usize::from(buffer.area.width);
+        let screen = screen_text(buffer);
+        let pos = screen
+            .find(needle)
+            .unwrap_or_else(|| panic!("no {needle} on screen"));
+        screen[..pos].chars().count() / width
+    }
+
+    #[test]
+    fn divider_is_drawn_between_the_sections() {
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::None);
+        let buffer = draw(&mut world, 80, 24);
+        let screen = screen_text(&buffer);
+
+        assert!(screen.contains("├┄ [expired] ┄"), "{screen}");
+        assert!(screen.contains('┤'), "{screen}");
+        let divider = screen_row(&buffer, "├┄ [expired]");
+        assert!(screen_row(&buffer, "one") < divider);
+        assert_eq!(screen_row(&buffer, "two"), divider + 1);
+    }
+
+    #[test]
+    fn divider_without_label_is_all_dashes() {
+        let source = SECTION_SOURCE.replace("else expired", "else");
+        let mut world = world_with_selection(&source, Selection::None);
+        let screen = screen_text(&draw(&mut world, 80, 24));
+
+        assert!(screen.contains("├┄┄┄┄"), "{screen}");
+        assert!(!screen.contains("[]"), "{screen}");
+    }
+
+    #[test]
+    fn long_divider_label_is_truncated_in_narrow_terminal() {
+        let source = SECTION_SOURCE.replace("expired", "a very long divider label that cannot fit");
+        let mut world = world_with_selection(&source, Selection::None);
+        let screen = screen_text(&draw(&mut world, 40, 24));
+
+        assert!(screen.contains("├┄ [a very"), "{screen}");
+        assert!(screen.contains("…]"), "{screen}");
+    }
+
+    #[test]
+    fn selected_divider_is_highlighted() {
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
+        let buffer = draw(&mut world, 80, 24);
+
+        assert_eq!(style_of(&buffer, "├").fg, world.get::<Theme>().selected.fg);
+    }
+
+    #[test]
+    fn s_previews_label_and_enter_adds_and_selects_divider() {
+        let mut world = world_with_selection(THREE_EVENTS_IN_ALT, Selection::Event(1));
+
+        press_char(&mut world, 's');
+        assert_eq!(
+            world.get::<EditorState>().mode,
+            EditorMode::InputSectionLabel
+        );
+        let screen = screen_text(&draw(&mut world, 80, 40));
+        assert!(screen.contains("├┄┄┄"), "{screen}");
+
+        type_text(&mut world, "late");
+        let screen = screen_text(&draw(&mut world, 80, 40));
+        assert!(screen.contains("├┄ [late]"), "{screen}");
+        assert_eq!(sections(&world).len(), 0);
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(sections(&world), [(1, "late".to_string())]);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+
+        press_char(&mut world, 'u');
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(selection(&world), Selection::Event(1));
+    }
+
+    #[test]
+    fn escape_in_section_prompt_restores_selection() {
+        let mut world = world_with_selection(THREE_EVENTS_IN_ALT, Selection::Event(2));
+        press_char(&mut world, 's');
+        type_text(&mut world, "x");
+        press(&mut world, KeyCode::Esc);
+
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        assert_eq!(selection(&world), Selection::Event(2));
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(undo_len(&world), 0);
+    }
+
+    #[test]
+    fn s_reports_why_no_section_can_start() {
+        let outside = "sequenceDiagram\nparticipant A\nparticipant B\nA->>B: x\nalt a\nA->>B: 1\nA->>B: 2\nend\nloop\nA->>B: 3\nA->>B: 4\nend\n";
+        let cases = [
+            (
+                Selection::Event(0),
+                "Select an event inside alt, par or critical",
+            ),
+            (
+                Selection::None,
+                "Select an event inside alt, par or critical",
+            ),
+            (
+                Selection::Participant(0),
+                "Select an event inside alt, par or critical",
+            ),
+            (
+                Selection::Fragment(0),
+                "Select an event inside alt, par or critical",
+            ),
+            (
+                Selection::Event(1),
+                "Pick an event below the frame's first one",
+            ),
+            (Selection::Event(4), "'loop' has no sections"),
+        ];
+        for (sel, message) in cases {
+            let mut world = world_with_selection(outside, sel);
+            press_char(&mut world, 's');
+            assert_eq!(status(&world), message, "{sel:?}");
+            assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
+        }
+
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::Event(1));
+        press_char(&mut world, 's');
+        assert_eq!(status(&world), "A section already starts here");
+
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
+        press_char(&mut world, 's');
+        assert_eq!(status(&world), "A section already starts here");
+    }
+
+    #[test]
+    fn enter_on_divider_edits_its_label() {
+        let mut world = world_with_selection(SECTION_SOURCE, Selection::Section(0, 0));
+
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.get::<EditorState>().input_buffer, "expired");
+        type_text(&mut world, "!");
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(sections(&world), [(1, "expired!".to_string())]);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+
+        press_char(&mut world, 'r');
+        press(&mut world, KeyCode::Esc);
+        assert_eq!(sections(&world), [(1, "expired!".to_string())]);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+    }
+
+    #[test]
+    fn capital_d_on_divider_merges_sections_and_selects_first_event() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        press_char(&mut world, 'D');
+
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(event_texts(&world), ["1", "2", "3", "4"]);
+        assert_eq!(selection(&world), Selection::Event(0));
+        assert_eq!(status(&world), "Section removed");
+
+        press_char(&mut world, 'u');
+        assert_eq!(sections(&world).len(), 1);
+    }
+
+    #[test]
+    fn j_and_k_move_the_selected_divider() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+
+        press_char(&mut world, 'J');
+        assert_eq!(sections(&world)[0].0, 3);
+        press_char(&mut world, 'J');
+        assert_eq!(sections(&world)[0].0, 3);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+
+        press_char(&mut world, 'K');
+        press_char(&mut world, 'K');
+        press_char(&mut world, 'K');
+        assert_eq!(sections(&world)[0].0, 1);
+    }
+
+    #[test]
+    fn m_and_capital_m_on_divider_insert_below_and_above() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        insert_message_via_keys(&mut world, 'm', "below");
+        assert_eq!(event_texts(&world), ["1", "2", "below", "3", "4"]);
+        assert_eq!(sections(&world)[0].0, 2);
+        assert_eq!(selection(&world), Selection::Event(2));
+
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        insert_message_via_keys(&mut world, 'M', "above");
+        assert_eq!(event_texts(&world), ["1", "2", "above", "3", "4"]);
+        assert_eq!(sections(&world)[0].0, 3);
+        assert_eq!(selection(&world), Selection::Event(2));
+    }
+
+    #[test]
+    fn f_and_capital_f_on_divider_act_on_the_frame() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        press_char(&mut world, 'f');
+        assert_eq!(world.get::<EditorState>().mode, EditorMode::SelectFrameKind);
+        press(&mut world, KeyCode::Esc);
+
+        press_char(&mut world, 'F');
+        assert_eq!(world.get::<SequenceDiagram>().fragments.len(), 0);
+        assert_eq!(selection(&world), Selection::Event(0));
+    }
+
+    #[test]
+    fn moving_an_event_across_a_divider_moves_the_divider() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Event(1));
+        press_char(&mut world, 'J');
+
+        assert_eq!(sections(&world)[0].0, 1);
+        assert_eq!(selection(&world), Selection::Event(1));
+    }
+
+    #[test]
+    fn move_that_empties_a_section_reports_it() {
+        let source = TWO_SECTIONS.replace("A->>B: 4\n", "");
+        let mut world = world_with_selection(&source, Selection::Event(2));
+        press_char(&mut world, 'K');
+
+        assert_eq!(sections(&world).len(), 0);
+        assert_eq!(status(&world), "Section removed");
+    }
+
+    #[test]
+    fn changing_kind_to_one_without_dividers_clears_sections() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        press_char(&mut world, 'f');
+        press_char(&mut world, 'j');
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+
+        let diagram = world.get::<SequenceDiagram>();
+        assert_eq!(diagram.fragments[0].kind, FragmentKind::Opt);
+        assert_eq!(diagram.fragments[0].sections.len(), 0);
+        assert_eq!(status(&world), "Sections removed");
+        assert_eq!(selection(&world), Selection::Fragment(0));
+
+        press_char(&mut world, 'u');
+        assert_eq!(
+            world.get::<SequenceDiagram>().fragments[0].kind,
+            FragmentKind::Alt
+        );
+        assert_eq!(sections(&world).len(), 1);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+    }
+
+    #[test]
+    fn changing_alt_to_par_keeps_sections_and_exports_and() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        press_char(&mut world, 'f');
+        press_char(&mut world, 'j');
+        press_char(&mut world, 'j');
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+
+        assert_eq!(
+            world.get::<SequenceDiagram>().fragments[0].kind,
+            FragmentKind::Par
+        );
+        assert_eq!(sections(&world).len(), 1);
+        assert_eq!(selection(&world), Selection::Section(0, 0));
+        assert!(
+            world
+                .get::<SequenceDiagram>()
+                .to_mermaid()
+                .contains("and b")
+        );
+
+        let screen = screen_text(&draw(&mut world, 80, 24));
+        assert!(screen.contains("par [ok]"), "{screen}");
+    }
+
+    #[test]
+    fn s_works_in_par_and_critical_frames() {
+        for keyword in ["par", "critical"] {
+            let source = THREE_EVENTS_IN_ALT.replace("alt", keyword);
+            let mut world = world_with_selection(&source, Selection::Event(2));
+            press_char(&mut world, 's');
+            press(&mut world, KeyCode::Enter);
+
+            assert_eq!(selection(&world), Selection::Section(0, 0), "{keyword}");
+            let divider = if keyword == "par" { "and" } else { "option" };
+            let exported = world.get::<SequenceDiagram>().to_mermaid();
+            assert!(exported.contains(&format!("    {divider}\n")), "{exported}");
+        }
+    }
+
+    #[test]
+    fn restoring_a_diagram_without_the_divider_selects_its_frame() {
+        let mut world = world_with_selection(TWO_SECTIONS, Selection::Section(0, 0));
+        let mut diagram = world.get::<SequenceDiagram>().clone();
+        diagram.fragments[0].sections.clear();
+
+        restore_diagram(&mut world, diagram, Selection::Section(0, 0), "Undo");
+
+        assert_eq!(selection(&world), Selection::Fragment(0));
     }
 }

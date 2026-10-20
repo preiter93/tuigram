@@ -53,10 +53,11 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `p` | Add participant (with a box selected: add it as the box's last member) |
 | `m/M` | Insert message after/before selected (inside its frame, if any) |
 | `n/N` | Insert note after/before selected (inside its frame, if any) |
-| `b/B` | Add box around participants / remove the selected or participant's box |
-| `f/F` | Add/edit, remove frame (events stay) |
+| `b/B` | Add box (`h/l` extends, `Enter`: color/label) / remove box |
+| `f/F` | Add/edit, remove frame (events stay); `j/k` extends with a live dashed preview |
+| `s` | Add a section divider above the selected event inside an `alt`, `par` or `critical` frame (label prompt, live preview); a selected divider: `Enter` edits its label, `D` removes it, `J/K` moves it |
 | `h/l` or `←/→` | Navigate left/right (participants, boxes) |
-| `j/k` or `↓/↑` | Navigate down/up (messages/notes, frame headers) |
+| `j/k` or `↓/↑` | Navigate down/up (messages/notes, frame headers, section dividers) |
 | `g/G` | Jump to first/last message/note (frame header if the first event starts a frame) |
 | `H/L` or `Shift+←/→` | Move participant or whole box left/right, reverse message arrow |
 | `a/A` | Cycle message arrow style forward/backward |
@@ -89,9 +90,13 @@ tuigram diagram.mmd
 
 Blank lines and `%%` comments are ignored; unsupported syntax is reported with its line number.
 
+In message and note prompts, `Alt+Enter` inserts `<br/>` (line break); typing `<br/>` works too. Message and note text containing `<br>`, `<br/>` or `<br />` is drawn on several lines.
+
 Participant aliases (`participant A as Alice`) and `actor` declarations are supported.
 
-Single-section frames `loop`, `opt`, `break` and `critical` (with an optional label, closed by `end`) are supported. In the editor, `f` marks the first event, extends the frame with `j`/`k`, and `Enter` picks the kind and label. Nested frames, frames inside boxes and boxes inside frames, and multi-section blocks (`alt`, `par`, `rect`) are rejected with a line number. With a frame selected (its header is a stop between events) `J`/`K` move the whole frame past one event or swap it with an adjacent frame, `Enter` edits kind and label, `D` removes the frame but keeps its events, `m`/`n` insert inside it as the first event and `M`/`N` insert above it.
+Frames `loop`, `opt`, `break`, `critical`, `alt` and `par` (with an optional label, closed by `end`) are supported. `alt`, `par` and `critical` have sections: `else`, `and` and `option` respectively start the next one (with an optional label). Empty sections are rejected on import, like empty frames. In the editor, `f` marks the first event (the selected one, or the first one outside any frame), extends the frame with `j`/`k`, and `Enter` picks the kind and label. Nested frames, frames inside boxes and boxes inside frames, and `rect` blocks are rejected with a line number. In an `alt`, `par` or `critical` frame, `s` on an event (not the frame's first one) types the label of a divider above it. A divider is a stop between events like the frame header: `Enter`/`e`/`r` edit its label, `D` merges its section into the one above (events stay), `J`/`K` move it by one event (never emptying a section), `m`/`n` insert as the first event below it and `M`/`N` as the last event above it. `J`/`K` on an event next to a divider move the divider instead; a section emptied by moving or deleting events loses its divider (the first one hands its label to the frame). Changing a frame to `loop`, `opt` or `break` removes its sections (`u` restores them); between `alt`, `par` and `critical` the sections stay and the divider keyword follows the kind. With a frame selected (its header is a stop between events) `J`/`K` move the whole frame past one event or swap it with an adjacent frame, `Enter` edits kind and label, `D` removes the frame but keeps its events, `m`/`n` insert inside it as the first event and `M`/`N` insert above it.
+
+In the editor, `b` starts a box at the selected participant (or the first one outside any box), `h`/`l` extends it with a live dashed preview, and `Enter` picks color and label. `b` on a box or on a participant inside one edits that box instead.
 
 A bare `autonumber` line before the first message or note numbers the messages (notes are not numbered). Options such as `autonumber 10 5` or `autonumber off` are rejected. Toggle it in the editor with `#`.
 

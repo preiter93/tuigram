@@ -7,6 +7,8 @@ pub enum Selection {
     Participant(usize),
     Event(usize),
     Fragment(usize),
+    /// Frame index and divider index within the frame.
+    Section(usize, usize),
     Box(usize),
 }
 
@@ -44,7 +46,7 @@ impl Selection {
         }
     }
 
-    /// A frame header is a stop just before the frame's first event.
+    /// A frame header or divider is a stop just before the event below it.
     pub fn down(self, diagram: &SequenceDiagram) -> Self {
         let participant_count = diagram.participant_count();
         let event_count = diagram.event_count();
@@ -52,15 +54,16 @@ impl Selection {
         match self {
             Selection::None if participant_count > 0 => Selection::Participant(0),
             Selection::None | Selection::Participant(_) | Selection::Box(_) if event_count > 0 => {
-                Self::event_or_frame(diagram, 0)
+                Self::stop_at(diagram, 0)
             }
-            Selection::Event(idx) if idx + 1 < event_count => {
-                Self::event_or_frame(diagram, idx + 1)
-            }
+            Selection::Event(idx) if idx + 1 < event_count => Self::stop_at(diagram, idx + 1),
             Selection::Fragment(idx) => diagram
                 .fragments
                 .get(idx)
                 .map_or(self, |f| Selection::Event(f.start)),
+            Selection::Section(frame_idx, k) => {
+                Self::section_start(diagram, frame_idx, k).map_or(self, Selection::Event)
+            }
             _ => self,
         }
     }
@@ -78,6 +81,8 @@ impl Selection {
             Selection::Event(idx) => {
                 if let Some(frame_idx) = Self::frame_starting_at(diagram, idx) {
                     Selection::Fragment(frame_idx)
+                } else if let Some((frame_idx, k)) = diagram.section_at(idx) {
+                    Selection::Section(frame_idx, k)
                 } else if idx > 0 {
                     Selection::Event(idx - 1)
                 } else {
@@ -89,6 +94,8 @@ impl Selection {
                 Some(_) => first_row,
                 None => self,
             },
+            Selection::Section(frame_idx, k) => Self::section_start(diagram, frame_idx, k)
+                .map_or(self, |at| Selection::Event(at - 1)),
             Selection::Participant(_) | Selection::Box(_) => self,
         }
     }
@@ -97,7 +104,7 @@ impl Selection {
         if diagram.event_count() == 0 {
             return self;
         }
-        Self::event_or_frame(diagram, 0)
+        Self::stop_at(diagram, 0)
     }
 
     pub fn last_event(self, diagram: &SequenceDiagram) -> Self {
@@ -121,11 +128,19 @@ impl Selection {
             .position(|b| b.start == participant_idx)
     }
 
-    fn event_or_frame(diagram: &SequenceDiagram, event_idx: usize) -> Self {
-        match Self::frame_starting_at(diagram, event_idx) {
-            Some(frame_idx) => Selection::Fragment(frame_idx),
+    fn stop_at(diagram: &SequenceDiagram, event_idx: usize) -> Self {
+        if let Some(frame_idx) = Self::frame_starting_at(diagram, event_idx) {
+            return Selection::Fragment(frame_idx);
+        }
+        match diagram.section_at(event_idx) {
+            Some((frame_idx, k)) => Selection::Section(frame_idx, k),
             None => Selection::Event(event_idx),
         }
+    }
+
+    fn section_start(diagram: &SequenceDiagram, frame_idx: usize, k: usize) -> Option<usize> {
+        let (at, _) = diagram.fragments.get(frame_idx)?.sections.get(k)?;
+        Some(*at)
     }
 
     fn frame_starting_at(diagram: &SequenceDiagram, event_idx: usize) -> Option<usize> {
@@ -144,11 +159,12 @@ impl Selection {
                 Selection::Participant(idx.min(participant_count - 1))
             }
             Selection::Event(idx) if event_count > 0 => Selection::Event(idx.min(event_count - 1)),
-            Selection::Fragment(idx) if idx < fragment_count => self,
+            Selection::Fragment(idx) | Selection::Section(idx, _) if idx < fragment_count => self,
             Selection::Box(idx) if idx < box_count => self,
             Selection::Participant(_)
             | Selection::Event(_)
             | Selection::Fragment(_)
+            | Selection::Section(..)
             | Selection::Box(_) => {
                 if participant_count > 0 {
                     Selection::Participant(0)
@@ -275,6 +291,46 @@ mod tests {
             Selection::Participant(0)
         );
         assert_eq!(Selection::Fragment(0).clamp(0, 0, 0, 0), Selection::None);
+    }
+
+    #[test]
+    fn walk_visits_divider_before_first_event_of_its_section() {
+        let d = diagram(
+            "    alt a\n        A->>B: 0\n    else b\n        A->>B: 1\n    end\n    A->>B: 2\n",
+        );
+        let expected = [
+            Selection::Participant(0),
+            Selection::Fragment(0),
+            Selection::Event(0),
+            Selection::Section(0, 0),
+            Selection::Event(1),
+            Selection::Event(2),
+        ];
+        assert_eq!(walk_down(&d), expected);
+
+        let mut path = vec![Selection::Event(2)];
+        loop {
+            let last = *path.last().unwrap();
+            let next = last.up(&d);
+            if next == last {
+                break;
+            }
+            path.push(next);
+        }
+        let expected_up: Vec<Selection> = expected.iter().rev().copied().collect();
+        assert_eq!(path, expected_up);
+    }
+
+    #[test]
+    fn clamp_section() {
+        assert_eq!(
+            Selection::Section(1, 3).clamp(2, 3, 2, 0),
+            Selection::Section(1, 3)
+        );
+        assert_eq!(
+            Selection::Section(1, 0).clamp(2, 3, 1, 0),
+            Selection::Participant(0)
+        );
     }
 
     #[test]

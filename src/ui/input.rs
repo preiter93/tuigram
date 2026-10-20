@@ -68,8 +68,18 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
             };
             (title.to_string(), Some(format!("{pos_str}:")))
         }
-        EditorMode::InputBoxLabel => ("Add Box".to_string(), Some("Label:".to_string())),
-        EditorMode::InputFrameLabel => ("Frame".to_string(), Some("Label (optional):".to_string())),
+        EditorMode::InputBoxLabel => (
+            "Add Box".to_string(),
+            Some("Label (optional, Enter to finish):".to_string()),
+        ),
+        EditorMode::InputFrameLabel => (
+            "Frame".to_string(),
+            Some("Label (optional, Enter to finish):".to_string()),
+        ),
+        EditorMode::InputSectionLabel => (
+            "Section".to_string(),
+            Some("Label (optional, Enter to finish):".to_string()),
+        ),
         EditorMode::InputSavePath => ("Save".to_string(), Some("Path:".to_string())),
         _ => return,
     };
@@ -125,7 +135,11 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
         width: inner.width.saturating_sub(padding * 2),
         height: 1,
     };
-    let hint_text = "Enter: confirm | Esc: cancel";
+    let mut hint_text = "Enter: confirm | Esc: cancel";
+    let long_hint = "Enter: confirm | Alt+Enter: line break | Esc: cancel";
+    if editor.mode.is_message_text_input() && long_hint.len() <= usize::from(hint_area.width) {
+        hint_text = long_hint;
+    }
     frame.render_widget(
         Paragraph::new(hint_text)
             .style(theme.muted)

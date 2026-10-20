@@ -52,9 +52,7 @@ impl SequenceDiagram {
         if start >= self.participants.len() || end >= self.participants.len() || start > end {
             return false;
         }
-        // Reject if this range overlaps any existing box.
-        let overlaps = self.boxes.iter().any(|b| start <= b.end && b.start <= end);
-        if overlaps {
+        if self.box_overlaps(start, end) {
             return false;
         }
         self.boxes.push(ParticipantBox {
@@ -65,6 +63,16 @@ impl SequenceDiagram {
         });
         self.boxes.sort_by_key(|b| b.start);
         true
+    }
+
+    pub fn overlapping_boxes(&self, start: usize, end: usize) -> Vec<usize> {
+        (0..self.boxes.len())
+            .filter(|&i| start <= self.boxes[i].end && self.boxes[i].start <= end)
+            .collect()
+    }
+
+    pub fn box_overlaps(&self, start: usize, end: usize) -> bool {
+        !self.overlapping_boxes(start, end).is_empty()
     }
 
     pub fn remove_box_at(&mut self, idx: usize) {
@@ -91,15 +99,20 @@ impl SequenceDiagram {
             label,
             start,
             end,
+            sections: Vec::new(),
         });
         self.fragments.sort_by_key(|f| f.start);
         true
     }
 
+    pub fn overlapping_fragments(&self, start: usize, end: usize) -> Vec<usize> {
+        (0..self.fragments.len())
+            .filter(|&i| start <= self.fragments[i].end && self.fragments[i].start <= end)
+            .collect()
+    }
+
     pub fn fragment_overlaps(&self, start: usize, end: usize) -> bool {
-        self.fragments
-            .iter()
-            .any(|f| start <= f.end && f.start <= end)
+        !self.overlapping_fragments(start, end).is_empty()
     }
 
     pub fn fragment_at(&self, event_idx: usize) -> Option<usize> {
@@ -114,15 +127,25 @@ impl SequenceDiagram {
         }
     }
 
+    /// The frame and divider index of the divider right above the event.
+    pub fn section_at(&self, event_idx: usize) -> Option<(usize, usize)> {
+        self.fragments.iter().enumerate().find_map(|(i, f)| {
+            let k = f.sections.iter().position(|(at, _)| *at == event_idx)?;
+            Some((i, k))
+        })
+    }
+
+    /// Rows a frame header or divider takes above the event: 0 or 1.
+    pub fn rows_above(&self, idx: usize) -> u16 {
+        let header = self.fragments.iter().any(|f| f.start == idx);
+        u16::from(header || self.section_at(idx).is_some())
+    }
+
     pub fn event_height(&self, idx: usize) -> u16 {
         let mut height = self.events.get(idx).map_or(3, Event::height);
-        for f in &self.fragments {
-            if f.start == idx {
-                height += 1;
-            }
-            if f.end == idx {
-                height += 1;
-            }
+        height += self.rows_above(idx);
+        if self.fragments.iter().any(|f| f.end == idx) {
+            height += 1;
         }
         height
     }
@@ -201,7 +224,8 @@ impl SequenceDiagram {
     }
 
     /// Inserts next to the anchor event and returns the new index. The new
-    /// event joins the anchor's frame; without an anchor it is appended.
+    /// event joins the anchor's frame and section; without an anchor it is
+    /// appended.
     pub fn insert_relative(&mut self, anchor: Option<usize>, before: bool, event: Event) -> usize {
         let (a, b) = event.endpoints();
         debug_assert!(a < self.participants.len() && b < self.participants.len());
@@ -213,7 +237,7 @@ impl SequenceDiagram {
 
         let at = (anchor + usize::from(!before)).min(self.events.len());
         let join = self.fragment_at(anchor);
-        self.insert_event(at, event, join);
+        self.insert_event(at, event, join, !before);
         at
     }
 
@@ -221,20 +245,25 @@ impl SequenceDiagram {
     /// its header. Returns the new index.
     pub fn insert_at_frame(&mut self, frame_idx: usize, inside: bool, event: Event) -> usize {
         let at = self.fragments[frame_idx].start;
-        self.insert_event(at, event, inside.then_some(frame_idx));
+        self.insert_event(at, event, inside.then_some(frame_idx), false);
         at
     }
 
-    fn insert_event(&mut self, at: usize, event: Event, join: Option<usize>) {
+    /// A divider at `at` moves down with the events only if `shift_divider`.
+    fn insert_event(&mut self, at: usize, event: Event, join: Option<usize>, shift_divider: bool) {
         let at = at.min(self.events.len());
         self.events.insert(at, event);
 
         for (i, f) in self.fragments.iter_mut().enumerate() {
             if Some(i) == join {
                 f.end += 1;
+                for (section_at, _) in &mut f.sections {
+                    if *section_at > at || (*section_at == at && shift_divider) {
+                        *section_at += 1;
+                    }
+                }
             } else if at <= f.start {
-                f.start += 1;
-                f.end += 1;
+                f.move_to(f.start + 1);
             }
         }
     }
@@ -248,16 +277,22 @@ impl SequenceDiagram {
         self.fragments.retain(|f| f.start != idx || f.end != idx);
         for f in &mut self.fragments {
             if idx < f.start {
-                f.start -= 1;
-                f.end -= 1;
+                f.move_to(f.start - 1);
             } else if idx <= f.end {
                 f.end -= 1;
+                for (at, _) in &mut f.sections {
+                    if *at > idx {
+                        *at -= 1;
+                    }
+                }
+                f.drop_empty_sections();
             }
         }
     }
 
     /// Moves an event one step. At a frame edge the event crosses the border
-    /// instead of swapping. Returns the event's new index.
+    /// and at a divider the divider moves instead of reordering. Returns the
+    /// event's new index.
     pub fn move_event(&mut self, idx: usize, down: bool) -> usize {
         if idx >= self.events.len() {
             return idx;
@@ -279,6 +314,12 @@ impl SequenceDiagram {
         if idx + 1 >= self.events.len() {
             return idx;
         }
+        if let Some((frame_idx, k)) = self.section_at(idx + 1) {
+            let f = &mut self.fragments[frame_idx];
+            f.sections[k].0 -= 1;
+            f.drop_empty_sections();
+            return idx;
+        }
         if let Some(f) = self.fragments.iter_mut().find(|f| f.start == idx + 1) {
             f.start -= 1;
             return idx;
@@ -295,6 +336,12 @@ impl SequenceDiagram {
             return idx;
         }
         if idx == 0 {
+            return idx;
+        }
+        if let Some((frame_idx, k)) = self.section_at(idx) {
+            let f = &mut self.fragments[frame_idx];
+            f.sections[k].0 += 1;
+            f.drop_empty_sections();
             return idx;
         }
         if let Some(f) = self.fragments.iter_mut().find(|f| f.end + 1 == idx) {
@@ -322,8 +369,7 @@ impl SequenceDiagram {
                 return idx - 1;
             }
             self.events[start - 1..=end].rotate_left(1);
-            self.fragments[idx].start -= 1;
-            self.fragments[idx].end -= 1;
+            self.fragments[idx].move_to(start - 1);
             return idx;
         }
 
@@ -336,16 +382,13 @@ impl SequenceDiagram {
             let next_end = next.end;
             let next_len = next.end - next.start + 1;
             self.events[start..=next_end].rotate_left(end - start + 1);
-            self.fragments[idx].start = start + next_len;
-            self.fragments[idx].end = next_end;
-            self.fragments[idx + 1].start = start;
-            self.fragments[idx + 1].end = start + next_len - 1;
+            self.fragments[idx].move_to(start + next_len);
+            self.fragments[idx + 1].move_to(start);
             self.fragments.swap(idx, idx + 1);
             return idx + 1;
         }
         self.events[start..=end + 1].rotate_right(1);
-        self.fragments[idx].start += 1;
-        self.fragments[idx].end += 1;
+        self.fragments[idx].move_to(start + 1);
         idx
     }
 
@@ -353,10 +396,58 @@ impl SequenceDiagram {
         let f = &mut self.fragments[frame_idx];
         if f.start == f.end {
             self.fragments.remove(frame_idx);
-        } else if from_start {
+            return;
+        }
+        if from_start {
             f.start += 1;
         } else {
             f.end -= 1;
+        }
+        f.drop_empty_sections();
+    }
+
+    /// Starts a new section at the event. Returns the divider's index in the
+    /// frame, or None if the frame has no dividers or the spot is not valid.
+    pub fn add_section(&mut self, frame_idx: usize, at: usize, label: String) -> Option<usize> {
+        let f = self.fragments.get_mut(frame_idx)?;
+        f.kind.divider()?;
+        if at <= f.start || at > f.end {
+            return None;
+        }
+
+        let k = f.sections.partition_point(|(s, _)| *s < at);
+        if f.sections.get(k).is_some_and(|(s, _)| *s == at) {
+            return None;
+        }
+        f.sections.insert(k, (at, label));
+        Some(k)
+    }
+
+    /// Merges the section into the one above; the events stay.
+    pub fn remove_section(&mut self, frame_idx: usize, k: usize) {
+        if let Some(f) = self.fragments.get_mut(frame_idx)
+            && k < f.sections.len()
+        {
+            f.sections.remove(k);
+        }
+    }
+
+    /// Moves a divider by one event without emptying a section.
+    pub fn move_section(&mut self, frame_idx: usize, k: usize, down: bool) {
+        let Some(f) = self.fragments.get_mut(frame_idx) else {
+            return;
+        };
+        let Some(&(at, _)) = f.sections.get(k) else {
+            return;
+        };
+
+        let above = if k == 0 { f.start } else { f.sections[k - 1].0 };
+        let below = f.sections.get(k + 1).map_or(f.end + 1, |(s, _)| *s);
+
+        if down && at + 1 < below {
+            f.sections[k].0 += 1;
+        } else if !down && at - 1 > above {
+            f.sections[k].0 -= 1;
         }
     }
 
@@ -604,6 +695,11 @@ impl SequenceDiagram {
             if let Some(f) = self.fragments.iter().find(|f| f.start == i) {
                 lines.push(format!("    {}", f.header()));
             }
+            if let Some((frame, k)) = self.section_at(i)
+                && let Some(line) = self.fragments[frame].divider_source(k)
+            {
+                lines.push(format!("    {line}"));
+            }
             let first_line = lines.len();
 
             match event {
@@ -724,6 +820,7 @@ impl SequenceDiagram {
                 label,
                 start: self.events.len(),
                 end: 0,
+                sections: Vec::new(),
             });
             return Ok(());
         }
@@ -732,6 +829,9 @@ impl SequenceDiagram {
             if first_word == "autonumber" {
                 return self
                     .parse_autonumber(trimmed, current_box.is_some() || current_frame.is_some());
+            }
+            if let Some(kind) = FragmentKind::with_divider(first_word) {
+                return self.parse_divider(current_frame, kind, trimmed);
             }
             if BLOCK_KEYWORDS.contains(&first_word) {
                 bail!("'{first_word}' blocks are not supported yet");
@@ -878,6 +978,9 @@ impl SequenceDiagram {
                 if self.events.len() == frame.start {
                     bail!("'{}' block is empty", frame.kind.as_mermaid_str());
                 }
+                if self.events.len() == section_start(&frame) {
+                    bail!("empty section before 'end'");
+                }
                 frame.end = self.events.len() - 1;
                 self.fragments.push(frame);
             } else {
@@ -887,6 +990,35 @@ impl SequenceDiagram {
         }
 
         bail!("unsupported mermaid feature: {trimmed}");
+    }
+
+    fn parse_divider(
+        &self,
+        current_frame: &mut Option<Fragment>,
+        kind: FragmentKind,
+        trimmed: &str,
+    ) -> Result<()> {
+        let (word, label) = trimmed
+            .split_once(char::is_whitespace)
+            .unwrap_or((trimmed, ""));
+
+        let frame = current_frame
+            .as_mut()
+            .filter(|f| f.kind == kind)
+            .ok_or_else(|| {
+                anyhow!(
+                    "'{word}' is only allowed inside '{}'",
+                    kind.as_mermaid_str()
+                )
+            })?;
+
+        if self.events.len() == section_start(frame) {
+            bail!("empty section before '{word}'");
+        }
+        frame
+            .sections
+            .push((self.events.len(), label.trim().to_string()));
+        Ok(())
     }
 
     fn parse_autonumber(&mut self, trimmed: &str, nested: bool) -> Result<()> {
@@ -942,6 +1074,10 @@ impl SequenceDiagram {
         }
         Ok(())
     }
+}
+
+fn section_start(frame: &Fragment) -> usize {
+    frame.sections.last().map_or(frame.start, |(at, _)| *at)
 }
 
 fn declaration(p: &Participant) -> String {
@@ -1505,6 +1641,17 @@ mod tests {
     }
 
     #[test]
+    fn test_divider_words_are_reserved_ids() {
+        let mut d = SequenceDiagram::new();
+        for name in ["else", "and", "option"] {
+            d.add_participant(name);
+        }
+
+        assert_eq!(ids(&d), vec!["else2", "and2", "option2"]);
+        assert!(SequenceDiagram::from_mermaid(&d.to_mermaid()).is_ok());
+    }
+
+    #[test]
     fn test_empty_alias_rejected() {
         for decl in ["participant A as ", "actor  as Alice", "actor A as"] {
             let err = parse_err(&format!("sequenceDiagram\n{decl}"));
@@ -1588,18 +1735,16 @@ mod tests {
 
     #[test]
     fn test_unsupported_keywords_rejected() {
-        for kw in ["alt", "else", "par", "and", "option", "rect"] {
-            let err = parse_err(&format!("sequenceDiagram\n{kw} x"));
-            assert!(err.contains(&format!("'{kw}' blocks")), "{err}");
-        }
+        let err = parse_err("sequenceDiagram\nrect x");
+        assert_eq!(err, "line 2: 'rect' blocks are not supported yet");
         for kw in ["create", "destroy", "activate", "deactivate"] {
             let err = parse_err(&format!("sequenceDiagram\n{kw} A"));
             assert_eq!(err, format!("line 2: '{kw}' is not supported yet"));
         }
         let err = parse_err("sequenceDiagram\nA->>B: x\nactivate B");
         assert_eq!(err, "line 3: 'activate' is not supported yet");
-        let err = parse_err("sequenceDiagram\nA->>B: x\nalt Cond");
-        assert_eq!(err, "line 3: 'alt' blocks are not supported yet");
+        let err = parse_err("sequenceDiagram\nA->>B: x\nrect Cond");
+        assert_eq!(err, "line 3: 'rect' blocks are not supported yet");
     }
 
     #[test]
@@ -1927,8 +2072,8 @@ mod tests {
                 "line 3: nested frames are not supported yet",
             ),
             (
-                "sequenceDiagram\nloop a\nalt b",
-                "line 3: 'alt' blocks are not supported yet",
+                "sequenceDiagram\nloop a\nrect b",
+                "line 3: 'rect' blocks are not supported yet",
             ),
             (
                 "sequenceDiagram\nloop a\nend",
@@ -1950,10 +2095,155 @@ mod tests {
                 "sequenceDiagram\nloop a\nA->>B: x\nend\nend",
                 "line 5: unexpected 'end'",
             ),
+            (
+                "sequenceDiagram\nA->>B: x\nelse y",
+                "line 3: 'else' is only allowed inside 'alt'",
+            ),
+            (
+                "sequenceDiagram\nloop a\nA->>B: x\nelse y\nend",
+                "line 4: 'else' is only allowed inside 'alt'",
+            ),
+            (
+                "sequenceDiagram\nalt a\nA->>B: x\nelse y\nelse z\nA->>B: x\nend",
+                "line 5: empty section before 'else'",
+            ),
+            (
+                "sequenceDiagram\nalt a\nelse y\nA->>B: x\nend",
+                "line 3: empty section before 'else'",
+            ),
+            (
+                "sequenceDiagram\nalt a\nA->>B: x\nelse y\nend",
+                "line 5: empty section before 'end'",
+            ),
+            (
+                "sequenceDiagram\nalt a\nend",
+                "line 3: 'alt' block is empty",
+            ),
         ];
         for (input, expected) in cases {
             assert_eq!(parse_err(input), expected, "{input}");
         }
+    }
+
+    const ALT_SOURCE: &str = "sequenceDiagram
+    participant A
+    participant B
+    A->>B: before
+    alt ok
+        A->>B: one
+        A->>B: two
+    else expired
+        B->>A: three
+    else
+        B->>A: four
+    end
+    A->>B: after
+";
+
+    /// Checks the section invariants of every frame.
+    fn assert_sections_valid(d: &SequenceDiagram) {
+        for f in &d.fragments {
+            let mut previous = f.start;
+            for (at, _) in &f.sections {
+                assert!(*at > previous && *at <= f.end, "{:?}", f.sections);
+                previous = *at;
+            }
+        }
+    }
+
+    #[test]
+    fn test_alt_sections_parse() {
+        let d = SequenceDiagram::from_mermaid(ALT_SOURCE).unwrap();
+        let f = &d.fragments[0];
+
+        assert_eq!(f.kind, FragmentKind::Alt);
+        assert_eq!((f.start, f.end), (1, 4));
+        assert_eq!(f.label, "ok");
+        assert_eq!(f.sections, [(3, "expired".to_string()), (4, String::new())]);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_alt_sections_exact_roundtrip() {
+        let d = SequenceDiagram::from_mermaid(ALT_SOURCE).unwrap();
+        assert_eq!(d.to_mermaid(), ALT_SOURCE);
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_divider_label_with_arrow_roundtrips() {
+        let source = "sequenceDiagram\n    participant A\n    participant B\n    alt a\n        A->>B: x\n    else a->>b\n        A->>B: y\n    end\n";
+        let d = SequenceDiagram::from_mermaid(source).unwrap();
+        assert_eq!(d.fragments[0].sections[0].1, "a->>b");
+        assert_eq!(d.to_mermaid(), source);
+    }
+
+    #[test]
+    fn test_every_sectioned_kind_parses_and_roundtrips() {
+        for kind in FragmentKind::ALL {
+            let Some(word) = kind.divider() else {
+                continue;
+            };
+            let keyword = kind.as_mermaid_str();
+            for (head, label) in [("a", "b"), ("", "")] {
+                let source = format!(
+                    "sequenceDiagram\n    participant A\n    participant B\n    {keyword} {head}\n        A->>B: x\n    {word} {label}\n        A->>B: y\n    {word}\n        A->>B: z\n    end\n"
+                );
+                let source = source.replace(" \n", "\n");
+
+                let d = SequenceDiagram::from_mermaid(&source).unwrap();
+                assert_eq!(d.fragments[0].kind, kind);
+                assert_eq!(d.fragments[0].sections.len(), 2);
+                assert_eq!(d.fragments[0].sections[0].1, label);
+                assert_sections_valid(&d);
+                assert_eq!(d.to_mermaid(), source, "{keyword}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_divider_word_must_match_the_frame_kind() {
+        let cases = [
+            ("par", "else", "alt"),
+            ("alt", "and", "par"),
+            ("par", "option", "critical"),
+            ("critical", "else", "alt"),
+            ("opt", "and", "par"),
+        ];
+        for (keyword, word, expected) in cases {
+            let source = format!("sequenceDiagram\n{keyword}\nA->>B: x\n{word} y\nA->>B: z\nend");
+            assert_eq!(
+                parse_err(&source),
+                format!("line 4: '{word}' is only allowed inside '{expected}'"),
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_section_requires_a_kind_with_dividers() {
+        for kind in FragmentKind::ALL {
+            let mut d = numbered(3);
+            d.add_fragment(kind, String::new(), 0, 2);
+            assert_eq!(
+                d.add_section(0, 1, String::new()).is_some(),
+                kind.divider().is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn test_section_at_rows_above_and_event_height() {
+        let d = SequenceDiagram::from_mermaid(ALT_SOURCE).unwrap();
+
+        assert_eq!(d.section_at(3), Some((0, 0)));
+        assert_eq!(d.section_at(4), Some((0, 1)));
+        assert_eq!(d.section_at(2), None);
+        assert_eq!(d.rows_above(1), 1);
+        assert_eq!(d.rows_above(3), 1);
+        assert_eq!(d.rows_above(2), 0);
+        assert_eq!(d.event_height(3), d.events[3].height() + 1);
+        assert_eq!(d.event_height(4), d.events[4].height() + 2);
+        assert_eq!(d.event_height(2), d.events[2].height());
     }
 
     #[test]
@@ -2086,17 +2376,289 @@ mod tests {
     }
 
     fn texts(d: &SequenceDiagram) -> String {
-        d.events
-            .iter()
-            .map(|e| match e {
-                Event::Message { text, .. } | Event::Note { text, .. } => text.clone(),
-            })
-            .collect()
+        d.events.iter().map(Event::text).collect()
     }
 
     fn assert_reimports_equal(d: &SequenceDiagram) {
         let again = SequenceDiagram::from_mermaid(&d.to_mermaid()).unwrap();
         assert!(again == *d);
+    }
+
+    /// Events 0..n with an alt frame over `start..=end` and dividers at `at`.
+    fn sectioned(n: usize, start: usize, end: usize, at: &[usize]) -> SequenceDiagram {
+        let mut d = numbered(n);
+        assert!(d.add_fragment(FragmentKind::Alt, "f".into(), start, end));
+        for &a in at {
+            assert!(d.add_section(0, a, format!("s{a}")).is_some());
+        }
+        d
+    }
+
+    fn divider_starts(d: &SequenceDiagram) -> Vec<usize> {
+        d.fragments[0].sections.iter().map(|(at, _)| *at).collect()
+    }
+
+    fn message_to(d: &SequenceDiagram, text: &str) -> Event {
+        Event::Message {
+            from: 0,
+            to: 1,
+            text: text.into(),
+            style: d
+                .events
+                .iter()
+                .find_map(|e| match e {
+                    Event::Message { style, .. } => Some(*style),
+                    Event::Note { .. } => None,
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    #[test]
+    fn test_add_section_rules() {
+        let mut d = numbered(5);
+        d.add_fragment(FragmentKind::Alt, "f".into(), 1, 3);
+        d.add_fragment(FragmentKind::Loop, "l".into(), 4, 4);
+
+        assert_eq!(d.add_section(0, 2, "b".into()), Some(0));
+        assert_eq!(d.add_section(0, 3, "c".into()), Some(1));
+        assert_eq!(d.add_section(0, 2, "x".into()), None);
+        assert_eq!(d.add_section(0, 1, "x".into()), None);
+        assert_eq!(d.add_section(0, 4, "x".into()), None);
+        assert_eq!(d.add_section(1, 4, "x".into()), None);
+        assert_eq!(d.add_section(7, 4, "x".into()), None);
+        assert_eq!(divider_starts(&d), [2, 3]);
+
+        let mut d = numbered(5);
+        d.add_fragment(FragmentKind::Alt, "f".into(), 0, 4);
+        d.add_section(0, 3, "late".into());
+        assert_eq!(d.add_section(0, 1, "early".into()), Some(0));
+        assert_eq!(divider_starts(&d), [1, 3]);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_remove_section_merges_into_section_above() {
+        let mut d = sectioned(5, 0, 4, &[2, 3]);
+        d.remove_section(0, 0);
+
+        assert_eq!(divider_starts(&d), [3]);
+        assert_eq!(d.event_count(), 5);
+        d.remove_section(0, 5);
+        assert_eq!(divider_starts(&d), [3]);
+    }
+
+    #[test]
+    fn test_move_section_limits() {
+        let mut d = sectioned(6, 0, 5, &[2, 4]);
+        let step = |d: &mut SequenceDiagram, k: usize, down: bool| {
+            d.move_section(0, k, down);
+            divider_starts(d)
+        };
+
+        assert_eq!(step(&mut d, 0, true), [3, 4]);
+        assert_eq!(step(&mut d, 0, true), [3, 4]);
+        assert_eq!(step(&mut d, 1, true), [3, 5]);
+        assert_eq!(step(&mut d, 1, true), [3, 5]);
+        assert_eq!(step(&mut d, 0, false), [2, 5]);
+        assert_eq!(step(&mut d, 0, false), [1, 5]);
+        assert_eq!(step(&mut d, 0, false), [1, 5]);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_insert_at_section_boundary_lands_in_anchor_section() {
+        // Divider before event 2: after anchor 1 stays in the section above.
+        let mut d = sectioned(4, 0, 3, &[2]);
+        let new = message_to(&d, "n");
+        assert_eq!(d.insert_relative(Some(1), false, new), 2);
+        assert_eq!(divider_starts(&d), [3]);
+
+        // Before anchor 2 (first of its section) it joins that section.
+        let mut d = sectioned(4, 0, 3, &[2]);
+        let new = message_to(&d, "n");
+        assert_eq!(d.insert_relative(Some(2), true, new), 2);
+        assert_eq!(divider_starts(&d), [2]);
+
+        // Inside a section: dividers below move down.
+        let mut d = sectioned(4, 0, 3, &[2]);
+        let new = message_to(&d, "n");
+        d.insert_relative(Some(0), false, new);
+        assert_eq!(divider_starts(&d), [3]);
+        assert_eq!(d.fragments[0].end, 4);
+        assert_sections_valid(&d);
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_insert_at_divider_above_and_below() {
+        // Below the divider: before its first event.
+        let mut d = sectioned(4, 0, 3, &[2]);
+        let new = message_to(&d, "below");
+        assert_eq!(d.insert_relative(Some(2), true, new), 2);
+        assert_eq!(divider_starts(&d), [2]);
+        assert_eq!(texts(&d), "01below23");
+
+        // Above the divider: after the last event of the section above.
+        let mut d = sectioned(4, 0, 3, &[2]);
+        let new = message_to(&d, "above");
+        assert_eq!(d.insert_relative(Some(1), false, new), 2);
+        assert_eq!(divider_starts(&d), [3]);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_insert_frame_edge_and_before_frame_shift_dividers() {
+        let mut d = sectioned(5, 1, 4, &[3]);
+        let new = message_to(&d, "n");
+        d.insert_relative(Some(1), true, new);
+        assert_eq!(divider_starts(&d), [4]);
+        assert_eq!((d.fragments[0].start, d.fragments[0].end), (1, 5));
+
+        let mut d = sectioned(5, 1, 4, &[3]);
+        let new = message_to(&d, "n");
+        d.insert_relative(Some(0), false, new);
+        assert_eq!(divider_starts(&d), [4]);
+        assert_eq!((d.fragments[0].start, d.fragments[0].end), (2, 5));
+
+        let mut d = sectioned(5, 1, 4, &[3]);
+        let new = message_to(&d, "n");
+        d.insert_at_frame(0, true, new);
+        assert_eq!(divider_starts(&d), [4]);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_remove_event_in_sections() {
+        // middle of a section
+        let mut d = sectioned(7, 1, 6, &[3, 5]);
+        d.remove_event(2);
+        assert_eq!(divider_starts(&d), [2, 4]);
+        assert_sections_valid(&d);
+
+        // first event of a section keeps the divider on the next event
+        let mut d = sectioned(7, 1, 6, &[3, 5]);
+        d.remove_event(3);
+        assert_eq!(divider_starts(&d), [3, 4]);
+
+        // last event of the last section
+        let mut d = sectioned(7, 1, 6, &[3, 5]);
+        d.remove_event(6);
+        assert_eq!(divider_starts(&d), [3, 5]);
+        d.remove_event(5);
+        assert_eq!(divider_starts(&d), [3]);
+        assert_eq!(d.fragments[0].end, 4);
+
+        // before the frame
+        let mut d = sectioned(7, 1, 6, &[3, 5]);
+        d.remove_event(0);
+        assert_eq!(divider_starts(&d), [2, 4]);
+        assert_eq!(d.fragments[0].start, 0);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_remove_first_section_takes_label_of_first_divider() {
+        let mut d = sectioned(5, 0, 4, &[2]);
+        d.remove_event(0);
+        d.remove_event(0);
+
+        assert_eq!(divider_starts(&d), Vec::<usize>::new());
+        assert_eq!(d.fragments[0].label, "s2");
+        assert_eq!((d.fragments[0].start, d.fragments[0].end), (0, 2));
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_move_event_across_divider_moves_the_divider() {
+        let mut d = sectioned(6, 0, 5, &[3]);
+
+        assert_eq!(d.move_event(2, true), 2);
+        assert_eq!(divider_starts(&d), [2]);
+        assert_eq!(texts(&d), "012345");
+
+        assert_eq!(d.move_event(2, false), 2);
+        assert_eq!(divider_starts(&d), [3]);
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_move_event_that_empties_a_section_drops_the_divider() {
+        let mut d = sectioned(4, 0, 3, &[1, 2]);
+        d.move_event(1, false);
+        assert_eq!(divider_starts(&d), [2]);
+        assert_eq!(d.fragments[0].sections[0].1, "s2");
+        assert_sections_valid(&d);
+
+        let mut d = sectioned(4, 0, 3, &[1, 3]);
+        d.move_event(3, true);
+        assert_eq!(divider_starts(&d), [1]);
+        assert_eq!(d.fragments[0].end, 2);
+
+        let mut d = sectioned(4, 0, 3, &[1, 2]);
+        d.move_event(1, true);
+        assert_eq!(divider_starts(&d), [1]);
+        assert_sections_valid(&d);
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_shrinking_frame_drops_empty_sections() {
+        let mut d = sectioned(4, 0, 3, &[1, 3]);
+        d.move_event(0, false);
+        assert_eq!((d.fragments[0].start, d.fragments[0].end), (1, 3));
+        assert_eq!(divider_starts(&d), [3]);
+        assert_eq!(d.fragments[0].label, "s1");
+        assert_sections_valid(&d);
+    }
+
+    #[test]
+    fn test_move_fragment_moves_dividers_along() {
+        let mut d = sectioned(6, 1, 3, &[2]);
+
+        assert_eq!(d.move_fragment(0, true), 0);
+        assert_eq!(divider_starts(&d), [3]);
+        assert_eq!(d.move_fragment(0, false), 0);
+        assert_eq!(d.move_fragment(0, false), 0);
+        assert_eq!(divider_starts(&d), [1]);
+        assert_sections_valid(&d);
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_swap_adjacent_frames_moves_their_dividers() {
+        let mut d = numbered(6);
+        d.add_fragment(FragmentKind::Alt, "a".into(), 0, 1);
+        d.add_section(0, 1, "x".into());
+        d.add_fragment(FragmentKind::Alt, "b".into(), 2, 5);
+        d.add_section(1, 4, "y".into());
+
+        assert_eq!(d.move_fragment(0, true), 1);
+        assert_eq!(d.fragments[0].label, "b");
+        assert_eq!(d.fragments[0].sections[0].0, 2);
+        assert_eq!(d.fragments[1].sections[0].0, 5);
+
+        assert_eq!(d.move_fragment(1, false), 0);
+        assert_eq!(d.fragments[0].label, "a");
+        assert_eq!(d.fragments[0].sections[0].0, 1);
+        assert_eq!(d.fragments[1].sections[0].0, 4);
+        assert_reimports_equal(&d);
+    }
+
+    #[test]
+    fn test_remove_participant_with_sections() {
+        let mut d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nalt a\nA->>B: 1\nelse b\nA->>C: 2\nelse c\nB->>A: 3\nend",
+        )
+        .unwrap();
+
+        d.remove_participant(2);
+        assert_eq!(divider_starts(&d), [1]);
+        assert_eq!(d.fragments[0].sections[0].1, "c");
+        assert_sections_valid(&d);
+
+        d.remove_participant(1);
+        assert_eq!(d.fragments.len(), 0);
     }
 
     #[test]
@@ -2177,6 +2739,26 @@ mod tests {
         assert_eq!(d.event_height(1), 3);
         assert_eq!(d.event_height(2), 3);
         assert_eq!(d.event_height(3), 5);
+    }
+
+    #[test]
+    fn test_multiline_event_heights() {
+        let d = SequenceDiagram::from_mermaid(
+            "sequenceDiagram\nloop\nA->>B: x<br/>y\nend\nNote right of B: a<br>b<br>c\n",
+        )
+        .unwrap();
+        assert_eq!(d.event_height(0), 6);
+        assert_eq!(d.event_height(1), 4);
+    }
+
+    #[test]
+    fn test_line_breaks_round_trip() {
+        let source = "sequenceDiagram\n    autonumber\n    participant A\n    participant B\n    A->>B: first line<br/>second line\n    B->>B: self<BR>loop\n    Note right of B: a<br />b<br/>c\n    loop retry\n        Note over A,B: framed<br>note\n    end\n";
+        let d = SequenceDiagram::from_mermaid(source).unwrap();
+        assert_eq!(d.to_mermaid(), source);
+        assert_eq!(d.events[0].text(), "first line<br/>second line");
+        assert_eq!(d.events[1].text(), "self<BR>loop");
+        assert_eq!(d.events[2].text(), "a<br />b<br/>c");
     }
 
     #[test]

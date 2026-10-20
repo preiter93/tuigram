@@ -1,3 +1,5 @@
+use std::mem;
+
 use ratatui::{
     Frame,
     buffer::{Buffer, Cell},
@@ -11,7 +13,7 @@ use tui_world::World;
 use crate::{
     core::{
         ArrowStyle, BoxColor, DEFAULT_BOX_COLOR, Event, Fragment, NotePosition, Participant,
-        SequenceDiagram,
+        ParticipantBox, SequenceDiagram, text_lines,
     },
     theme::Theme,
     ui::{
@@ -25,8 +27,127 @@ const ACTOR_GLYPH: &str = "☺ ";
 const FRAME_PADDING: u16 = 3;
 const SELF_LOOP_WIDTH: u16 = 4;
 const MAX_CANVAS_WIDTH: u16 = 4096;
+const PREVIEW_FRAME_TITLE: &str = "new frame";
+const PREVIEW_BOX_LABEL: &str = "new box";
+const DIVIDER_LABEL_ROOM: u16 = 7;
+const PREVIEW_DASH: &str = "┄";
 
+/// What the frame or box being created adds to the drawing.
+enum Preview {
+    /// Index of the preview inserted into the drawn diagram.
+    Added(usize),
+    /// Existing frames or boxes the new one would collide with.
+    Collides(Vec<usize>),
+    /// Frame and divider index of the divider inserted into the drawn diagram.
+    Section(usize, usize),
+}
+
+/// Draws the diagram with the frame or box being created as if it already existed,
+/// so layout and scrolling match the final result. The preview lives in a clone that
+/// stands in for the real diagram only while drawing.
 pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
+    let editor = world.get::<EditorState>();
+    if editor.frame_selection_range().is_none()
+        && editor.box_selection_range().is_none()
+        && editor.section_preview().is_none()
+    {
+        render_diagram(f, outer_area, world, None, None);
+        return;
+    }
+
+    let mut preview_diagram = world.get::<SequenceDiagram>().clone();
+    let frame_preview = add_frame_preview(editor, &mut preview_diagram)
+        .or_else(|| add_section_preview(editor, &mut preview_diagram));
+    let box_preview = add_box_preview(editor, &mut preview_diagram);
+
+    let real = mem::replace(world.get_mut::<SequenceDiagram>(), preview_diagram);
+    render_diagram(
+        f,
+        outer_area,
+        world,
+        frame_preview.as_ref(),
+        box_preview.as_ref(),
+    );
+    *world.get_mut::<SequenceDiagram>() = real;
+}
+
+fn add_section_preview(editor: &EditorState, diagram: &mut SequenceDiagram) -> Option<Preview> {
+    let at = editor.section_preview()?;
+    let frame_idx = diagram.fragment_at(at)?;
+    let k = diagram.add_section(frame_idx, at, editor.input_buffer.clone())?;
+    Some(Preview::Section(frame_idx, k))
+}
+
+/// A range that overlaps existing frames is not previewed, those are marked instead.
+fn add_frame_preview(editor: &EditorState, diagram: &mut SequenceDiagram) -> Option<Preview> {
+    let range = editor.frame_selection_range()?;
+    let (start, end) = (*range.start(), *range.end());
+    if end >= diagram.event_count() {
+        return None;
+    }
+
+    let colliding = diagram.overlapping_fragments(start, end);
+    if !colliding.is_empty() {
+        return Some(Preview::Collides(colliding));
+    }
+
+    let idx = diagram.fragments.partition_point(|f| f.start <= start);
+    diagram.fragments.insert(
+        idx,
+        Fragment {
+            kind: editor.frame_kind,
+            label: editor.input_buffer.clone(),
+            start,
+            end,
+            sections: Vec::new(),
+        },
+    );
+    Some(Preview::Added(idx))
+}
+
+/// A range that overlaps existing boxes is not previewed, those are marked instead.
+fn add_box_preview(editor: &EditorState, diagram: &mut SequenceDiagram) -> Option<Preview> {
+    let range = editor.box_selection_range()?;
+    let (start, end) = (*range.start(), *range.end());
+    if end >= diagram.participant_count() {
+        return None;
+    }
+
+    let colliding = diagram.overlapping_boxes(start, end);
+    if !colliding.is_empty() {
+        return Some(Preview::Collides(colliding));
+    }
+
+    let label = if editor.input_buffer.is_empty() {
+        PREVIEW_BOX_LABEL.to_string()
+    } else {
+        editor.input_buffer.clone()
+    };
+    let idx = diagram.boxes.partition_point(|b| b.start <= start);
+    diagram.boxes.insert(
+        idx,
+        ParticipantBox {
+            label,
+            color: box_color_chosen(editor).then_some(editor.box_color),
+            start,
+            end,
+        },
+    );
+    Some(Preview::Added(idx))
+}
+
+/// The color is only chosen once the picker is reached.
+fn box_color_chosen(editor: &EditorState) -> bool {
+    editor.mode != EditorMode::SelectBoxEnd
+}
+
+fn render_diagram(
+    f: &mut Frame,
+    outer_area: Rect,
+    world: &mut World,
+    frame_preview: Option<&Preview>,
+    box_preview: Option<&Preview>,
+) {
     let selection = world.get::<EditorState>().selection;
     let area = outer_area.inner(Margin::new(0, 1));
 
@@ -39,6 +160,12 @@ pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
             .fragments
             .get(idx)
             .map(|f| f.start),
+        Selection::Section(frame_idx, k) => world
+            .get::<SequenceDiagram>()
+            .fragments
+            .get(frame_idx)
+            .and_then(|f| f.sections.get(k))
+            .map(|(at, _)| *at),
         _ => None,
     };
     if let Some(idx) = visible_event {
@@ -66,10 +193,10 @@ pub fn render_sequence(f: &mut Frame, outer_area: Rect, world: &mut World) {
 
     let lifeline_start = area.y + HEADER_HEIGHT;
     let rows = event_rows(world, lifeline_start + FIRST_MESSAGE_OFFSET);
-    render_box_outlines(&mut buf, canvas, world, &participants, &rows);
+    render_box_outlines(&mut buf, canvas, world, &participants, &rows, box_preview);
     render_participants(&mut buf, canvas, world, &participants);
     render_lifelines(&mut buf, canvas, world, &participants, lifeline_start);
-    render_fragments(&mut buf, canvas, world, &participants, &rows);
+    render_fragments(&mut buf, canvas, world, &participants, &rows, frame_preview);
     render_events(&mut buf, world, &participants, &rows);
 
     let (content_left, content_right) = content_columns(&buf);
@@ -118,9 +245,10 @@ fn selection_span(canvas: Rect, world: &World, positions: &[u16]) -> Option<(u16
             let event = diagram.events.get(i)?;
             Some(event_extent(event, &event_text(diagram, i), positions))
         }
-        Selection::Fragment(i) => {
+        Selection::Fragment(i) | Selection::Section(i, _) => {
             let frame = diagram.fragments.get(i)?;
-            let (left, width, _) = frame_bounds(canvas, diagram, frame, positions)?;
+            let title = frame_title(frame.kind.as_mermaid_str(), &frame.label);
+            let (left, width, _) = frame_bounds(canvas, diagram, frame, &title, positions)?;
             Some((left, left + width - 1))
         }
         Selection::None => None,
@@ -267,7 +395,7 @@ fn column_gaps(diagram: &SequenceDiagram, max_gap: u16) -> Vec<u16> {
     }
 
     for (i, event) in diagram.events.iter().enumerate() {
-        let text = text_width(&event_text(diagram, i));
+        let text = label_width(&event_text(diagram, i));
         match event {
             Event::Message { from, to, .. } if from == to => {
                 gaps[from + 1] = gaps[from + 1].max(SELF_LOOP_WIDTH + text + 1);
@@ -324,12 +452,16 @@ fn header_span(area: Rect, center: u16, participant: &Participant) -> (u16, u16)
 
 fn render_participants(buf: &mut Buffer, area: Rect, world: &World, positions: &[u16]) {
     let diagram = world.get::<SequenceDiagram>();
-    let selection = world.get::<EditorState>().selection;
+    let editor = world.get::<EditorState>();
+    let selection = editor.selection;
+    let box_range = editor.box_selection_range();
     let theme = world.get::<Theme>();
 
     for (i, participant) in diagram.participants.iter().enumerate() {
         let style = if selection == Selection::Participant(i) {
             theme.selected
+        } else if box_range.as_ref().is_some_and(|range| range.contains(&i)) {
+            theme.accent
         } else {
             theme.text
         };
@@ -449,19 +581,18 @@ fn render_box_outlines(
     world: &World,
     positions: &[u16],
     rows: &[(usize, u16)],
+    preview: Option<&Preview>,
 ) {
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
-    let selection = world.get::<EditorState>().selection;
+    let editor = world.get::<EditorState>();
+    let selection = editor.selection;
     let area_bottom = area.y + area.height.saturating_sub(1);
 
     let event_count = diagram.event_count();
     let has_below = world.get::<ScrollState>().visible_range(diagram).end < event_count;
     let content_end = match rows.last() {
-        Some(&(i, y)) => {
-            let has_header = diagram.fragments.iter().any(|f| f.start == i);
-            y + diagram.event_height(i) - u16::from(has_header)
-        }
+        Some(&(i, y)) => y + diagram.event_height(i) - diagram.rows_above(i),
         None => area.y + HEADER_HEIGHT + FIRST_MESSAGE_OFFSET,
     };
     let bottom = if has_below {
@@ -482,14 +613,21 @@ fn render_box_outlines(
             continue;
         };
 
-        let style = if selection == Selection::Box(box_idx) {
-            theme.selected.add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(box_color(b.color.unwrap_or(DEFAULT_BOX_COLOR)))
+        let is_preview = matches!(preview, Some(Preview::Added(idx)) if *idx == box_idx);
+        let style = match preview {
+            Some(Preview::Added(idx)) if *idx == box_idx => {
+                let color = box_color_chosen(editor).then_some(editor.box_color);
+                color.map_or(theme.selected, |c| Style::default().fg(box_color(c)))
+            }
+            Some(Preview::Collides(indices)) if indices.contains(&box_idx) => theme.error,
+            _ if selection == Selection::Box(box_idx) => {
+                theme.selected.add_modifier(Modifier::BOLD)
+            }
+            _ => Style::default().fg(box_color(b.color.unwrap_or(DEFAULT_BOX_COLOR))),
         };
         let width = right - left + 1;
 
-        Paragraph::new(box_top_edge(&b.label, width))
+        Paragraph::new(box_top_edge(&b.label, width, is_preview))
             .style(style)
             .render(
                 Rect {
@@ -515,7 +653,7 @@ fn render_box_outlines(
             }
         }
 
-        let dashes = "─".repeat(usize::from(width - 2));
+        let dashes = horizontal_rule(usize::from(width - 2), is_preview);
         Paragraph::new(format!("╰{dashes}╯")).style(style).render(
             Rect {
                 x: left,
@@ -528,17 +666,26 @@ fn render_box_outlines(
     }
 }
 
-fn box_top_edge(label: &str, width: u16) -> String {
+fn box_top_edge(label: &str, width: u16, dashed: bool) -> String {
     let inner = usize::from(width - 2);
+    let dash = dash_glyph(dashed);
     // "─ " before and " ─" after the label
     let label_room = width.saturating_sub(6);
     if label.is_empty() || label_room == 0 {
-        return format!("╭{}╮", "─".repeat(inner));
+        return format!("╭{}╮", dash.repeat(inner));
     }
 
     let label = truncate_to_width(label, label_room);
-    let dashes = inner.saturating_sub(text_width(&label) as usize + 3);
-    format!("╭─ {label} {}╮", "─".repeat(dashes))
+    let rest = inner.saturating_sub(text_width(&label) as usize + 3);
+    format!("╭{dash} {label} {}╮", dash.repeat(rest))
+}
+
+fn dash_glyph(dashed: bool) -> &'static str {
+    if dashed { PREVIEW_DASH } else { "─" }
+}
+
+fn horizontal_rule(len: usize, dashed: bool) -> String {
+    dash_glyph(dashed).repeat(len)
 }
 
 pub fn box_color(color: BoxColor) -> Color {
@@ -611,7 +758,7 @@ fn render_lifelines(
     }
 }
 
-/// Anchor row of every visible event, leaving room for frame header rows.
+/// Anchor row of every visible event, leaving room for frame header and divider rows.
 fn event_rows(world: &World, base_y: u16) -> Vec<(usize, u16)> {
     let diagram = world.get::<SequenceDiagram>();
     let visible_range = world.get::<ScrollState>().visible_range(diagram);
@@ -620,12 +767,10 @@ fn event_rows(world: &World, base_y: u16) -> Vec<(usize, u16)> {
     let mut rows = Vec::new();
 
     for i in visible_range {
-        let has_header = diagram.fragments.iter().any(|f| f.start == i);
-        if has_header {
-            y += 1;
-        }
+        let above = diagram.rows_above(i);
+        y += above;
         rows.push((i, y));
-        y += diagram.event_height(i) - u16::from(has_header);
+        y += diagram.event_height(i) - above;
     }
 
     rows
@@ -637,6 +782,7 @@ fn render_fragments(
     world: &World,
     participants: &[u16],
     rows: &[(usize, u16)],
+    preview: Option<&Preview>,
 ) {
     let diagram = world.get::<SequenceDiagram>();
     let theme = world.get::<Theme>();
@@ -647,13 +793,18 @@ fn render_fragments(
     let first_row = area.y + HEADER_HEIGHT;
     let last_row = area.y + area.height - 1;
     let anchor = |idx: usize| rows.iter().find(|(i, _)| *i == idx).map(|(_, y)| *y);
-    let selection = world.get::<EditorState>().selection;
+    let editor = world.get::<EditorState>();
+    let selection = editor.selection;
 
     for (frame_idx, frame) in diagram.fragments.iter().enumerate() {
-        let (border_style, title_style) = if selection == Selection::Fragment(frame_idx) {
-            (theme.selected, theme.selected)
-        } else {
-            (theme.muted, theme.accent)
+        let is_preview = matches!(preview, Some(Preview::Added(idx)) if *idx == frame_idx);
+        let (border_style, title_style) = match preview {
+            Some(Preview::Added(idx)) if *idx == frame_idx => (theme.selected, theme.selected),
+            Some(Preview::Collides(indices)) if indices.contains(&frame_idx) => {
+                (theme.error, theme.error)
+            }
+            _ if selection == Selection::Fragment(frame_idx) => (theme.selected, theme.selected),
+            _ => (theme.muted, theme.accent),
         };
 
         if frame.end < first_visible || frame.start > last_visible {
@@ -663,7 +814,13 @@ fn render_fragments(
         let header_y = anchor(frame.start).map(|y| y - 2);
         let footer_y = anchor(frame.end).map(|y| y + diagram.events[frame.end].height() - 1);
 
-        let Some((left, width, title)) = frame_bounds(area, diagram, frame, participants) else {
+        let title = if is_preview && editor.mode == EditorMode::SelectFrameEnd {
+            PREVIEW_FRAME_TITLE.to_string()
+        } else {
+            frame_title(frame.kind.as_mermaid_str(), &frame.label)
+        };
+        let Some((left, width, title)) = frame_bounds(area, diagram, frame, &title, participants)
+        else {
             continue;
         };
         let title_width = text_width(&title);
@@ -685,11 +842,14 @@ fn render_fragments(
                 let line = Line::from(vec![
                     Span::styled("┌ ", border_style),
                     Span::styled(title.as_str(), title_style),
-                    Span::styled(format!(" {}┐", "─".repeat(dashes)), border_style),
+                    Span::styled(
+                        format!(" {}┐", horizontal_rule(dashes, is_preview)),
+                        border_style,
+                    ),
                 ]);
                 Paragraph::new(line).render(row, buf);
             } else if Some(y) == footer_y {
-                let dashes = "─".repeat(usize::from(width.saturating_sub(2)));
+                let dashes = horizontal_rule(usize::from(width.saturating_sub(2)), is_preview);
                 Paragraph::new(format!("└{dashes}┘"))
                     .style(border_style)
                     .render(row, buf);
@@ -701,7 +861,50 @@ fn render_fragments(
                 }
             }
         }
+
+        for (k, (at, label)) in frame.sections.iter().enumerate() {
+            let Some(y) = anchor(*at).map(|y| y - 2) else {
+                continue;
+            };
+            if y < first_row || y > last_row {
+                continue;
+            }
+
+            let is_preview_divider =
+                matches!(preview, Some(Preview::Section(f, i)) if (*f, *i) == (frame_idx, k));
+            let (line_style, label_style) =
+                if is_preview_divider || selection == Selection::Section(frame_idx, k) {
+                    (theme.selected, theme.selected)
+                } else {
+                    (border_style, title_style)
+                };
+            let row = Rect {
+                x: left,
+                y,
+                width,
+                height: 1,
+            };
+            let line = divider_line(label, width, line_style, label_style);
+            Paragraph::new(line).render(row, buf);
+        }
     }
+}
+
+/// Dashed rule across a frame: `├┄ [label] ┄┄┤`, or only dashes without a label.
+fn divider_line(label: &str, width: u16, line_style: Style, label_style: Style) -> Line<'static> {
+    let max_label = width.saturating_sub(DIVIDER_LABEL_ROOM);
+    if label.is_empty() || max_label == 0 {
+        let dashes = horizontal_rule(usize::from(width.saturating_sub(2)), true);
+        return Line::from(Span::styled(format!("├{dashes}┤"), line_style));
+    }
+
+    let label = format!("[{}]", truncate_to_width(label, max_label));
+    let dashes = usize::from(width.saturating_sub(text_width(&label) + 5));
+    Line::from(vec![
+        Span::styled("├┄ ", line_style),
+        Span::styled(label, label_style),
+        Span::styled(format!(" {}┤", horizontal_rule(dashes, true)), line_style),
+    ])
 }
 
 /// Left x, width and (possibly truncated) title of a frame, or None if it cannot fit.
@@ -709,6 +912,7 @@ fn frame_bounds(
     area: Rect,
     diagram: &SequenceDiagram,
     frame: &Fragment,
+    full_title: &str,
     participants: &[u16],
 ) -> Option<(u16, u16, String)> {
     let extents: Vec<(u16, u16)> = (frame.start..=frame.end)
@@ -724,18 +928,24 @@ fn frame_bounds(
         return None;
     }
 
-    let title = truncate_to_width(
-        &frame_title(frame.kind.as_mermaid_str(), &frame.label),
-        available - 5,
-    );
+    let title = truncate_to_width(full_title, available - 5);
     let desired_left = min_x.saturating_sub(FRAME_PADDING).max(min_left);
     let width = (max_x + FRAME_PADDING + 1)
         .saturating_sub(desired_left)
         .max(text_width(&title) + 5)
+        .max(divider_min_width(frame))
         .min(available);
     let left = desired_left.min(max_right + 1 - width);
 
     Some((left, width, title))
+}
+
+/// Width a frame needs to show its widest divider label untruncated.
+fn divider_min_width(frame: &Fragment) -> u16 {
+    let widest = frame.sections.iter().map(|(_, label)| text_width(label));
+    widest
+        .max()
+        .map_or(0, |w| if w == 0 { 0 } else { w + DIVIDER_LABEL_ROOM })
 }
 
 fn truncate_to_width(text: &str, max_width: u16) -> String {
@@ -770,7 +980,7 @@ fn render_events(buf: &mut Buffer, world: &World, participants: &[u16], rows: &[
     let editor = world.get::<EditorState>();
     let theme = world.get::<Theme>();
 
-    let frame_range = frame_selection_range(editor);
+    let frame_range = editor.frame_selection_range();
 
     for &(i, y) in rows {
         let event = &diagram.events[i];
@@ -822,16 +1032,6 @@ fn render_events(buf: &mut Buffer, world: &World, participants: &[u16], rows: &[
     }
 }
 
-fn frame_selection_range(editor: &EditorState) -> Option<std::ops::RangeInclusive<usize>> {
-    if editor.mode != EditorMode::SelectFrameEnd {
-        return None;
-    }
-    let (Some(start), Selection::Event(cursor)) = (editor.frame_start, editor.selection) else {
-        return None;
-    };
-    Some(start.min(cursor)..=start.max(cursor))
-}
-
 fn line_glyph(arrow_style: ArrowStyle) -> char {
     if arrow_style.is_dashed() {
         '┄'
@@ -862,6 +1062,9 @@ fn render_message(
     y: u16,
     style: ratatui::style::Style,
 ) {
+    let lines = text_lines(text);
+    let line_count = lines.len() as u16;
+
     if from_x == to_x {
         let mut area = Rect {
             x: from_x,
@@ -877,24 +1080,31 @@ fn render_message(
             .style(style)
             .render(area, buf);
 
-        area.y = y;
-        // Start after the lifeline column so the lifeline stays visible.
-        let middle = Rect {
-            x: area.x + 1,
-            width: area.width - 1,
-            ..area
-        };
-        Paragraph::new("  │").style(style).render(middle, buf);
+        for (k, label) in lines.into_iter().enumerate() {
+            let row = y + k as u16;
 
-        area.y = y + 1;
+            // Start after the lifeline column so the lifeline stays visible.
+            let middle = Rect {
+                x: from_x + 1,
+                y: row,
+                width: SELF_LOOP_WIDTH - 1,
+                height: 1,
+            };
+            Paragraph::new("  │").style(style).render(middle, buf);
+
+            let label_area = Rect {
+                x: from_x + SELF_LOOP_WIDTH,
+                y: row,
+                width: text_width(label),
+                height: 1,
+            };
+            Paragraph::new(label).style(style).render(label_area, buf);
+        }
+
+        area.y = y + line_count;
         Paragraph::new(format!("{head}{line}{line}┘"))
             .style(style)
             .render(area, buf);
-
-        area.x = from_x + SELF_LOOP_WIDTH;
-        area.y = y;
-        area.width = text_width(text);
-        Paragraph::new(text).style(style).render(area, buf);
     } else {
         let start = from_x.min(to_x);
         let end = from_x.max(to_x);
@@ -913,28 +1123,30 @@ fn render_message(
         Paragraph::new(Line::from(arrow)).style(style).render(
             Rect {
                 x: start,
-                y,
+                y: y + line_count - 1,
                 width: len + 1,
                 height: 1,
             },
             buf,
         );
 
-        let width = text_width(text);
-        let text_start = message_text_start(start, len, width);
+        for (k, label) in lines.into_iter().enumerate() {
+            let width = text_width(label);
+            let text_start = message_text_start(start, len, width);
 
-        Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .style(style)
-            .render(
-                Rect {
-                    x: text_start,
-                    y: y.saturating_sub(1),
-                    width,
-                    height: 1,
-                },
-                buf,
-            );
+            Paragraph::new(label)
+                .alignment(Alignment::Center)
+                .style(style)
+                .render(
+                    Rect {
+                        x: text_start,
+                        y: (y + k as u16).saturating_sub(1),
+                        width,
+                        height: 1,
+                    },
+                    buf,
+                );
+        }
     }
 }
 
@@ -949,35 +1161,34 @@ fn render_note(
     y: u16,
     style: ratatui::style::Style,
 ) {
+    let lines = text_lines(text);
     let (x, width) = note_span(
         position,
         participants[participant_start],
         participants[participant_end],
-        text_width(text),
+        label_width(text),
     );
 
     let area = Rect {
         x,
         y: y.saturating_sub(1),
         width,
-        height: 1,
+        height: lines.len() as u16,
     }
     .intersection(buf.area);
 
     Clear.render(area, buf);
-    Paragraph::new(text)
+    Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
         .alignment(Alignment::Center)
         .style(style.reversed())
         .render(area, buf);
 }
 
 fn event_text(diagram: &SequenceDiagram, idx: usize) -> String {
-    let text = match &diagram.events[idx] {
-        Event::Message { text, .. } | Event::Note { text, .. } => text,
-    };
+    let text = diagram.events[idx].text();
     match diagram.message_number(idx) {
         Some(n) => format!("{n}. {text}"),
-        None => text.clone(),
+        None => text.to_string(),
     }
 }
 
@@ -986,7 +1197,7 @@ fn event_extent(event: &Event, text: &str, participants: &[u16]) -> (u16, u16) {
     match event {
         Event::Message { from, to, .. } => {
             let (from_x, to_x) = (participants[*from], participants[*to]);
-            let width = text_width(text);
+            let width = label_width(text);
 
             if from_x == to_x {
                 let right = from_x + SELF_LOOP_WIDTH + width.max(1) - 1;
@@ -1008,7 +1219,7 @@ fn event_extent(event: &Event, text: &str, participants: &[u16]) -> (u16, u16) {
                 *position,
                 participants[*participant_start],
                 participants[*participant_end],
-                text_width(text),
+                label_width(text),
             );
             (x, x + width - 1)
         }
@@ -1044,6 +1255,14 @@ fn note_span(position: NotePosition, start_x: u16, end_x: u16, text_width: u16) 
 
 fn text_width(text: &str) -> u16 {
     Line::from(text).width() as u16
+}
+
+fn label_width(text: &str) -> u16 {
+    text_lines(text)
+        .into_iter()
+        .map(text_width)
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -1104,6 +1323,17 @@ mod tests {
             );
             assert!(x0 + w0 < x1, "headers {i} and {} overlap", i + 1);
         }
+    }
+
+    #[test]
+    fn widest_line_drives_gap_width() {
+        let wide = "a much longer second line";
+        let (positions, _) = layout(
+            &format!("sequenceDiagram\nparticipant A\nparticipant B\nA->>B: hi<br/>{wide}\n"),
+            200,
+        );
+
+        assert!(positions[1] - positions[0] > text_width(wide));
     }
 
     #[test]

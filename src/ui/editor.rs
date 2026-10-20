@@ -1,7 +1,10 @@
 use super::Selection;
 use crate::core::NotePosition;
 use crate::core::{BoxColor, FragmentKind};
-use std::time::{Duration, Instant};
+use std::{
+    ops::RangeInclusive,
+    time::{Duration, Instant},
+};
 
 const STATUS_DURATION: Duration = Duration::from_millis(1000);
 const ERROR_STATUS_DURATION: Duration = Duration::from_secs(3);
@@ -29,13 +32,13 @@ pub enum EditorMode {
     EditNotePosition,
     EditNoteEndParticipant,
     EditNoteText,
-    SelectBoxStart,
     SelectBoxEnd,
     SelectBoxColor,
     InputBoxLabel,
     SelectFrameEnd,
     SelectFrameKind,
     InputFrameLabel,
+    InputSectionLabel,
     InputSavePath,
 }
 
@@ -51,13 +54,18 @@ impl EditorMode {
                 | Self::SelectNoteEndParticipant
                 | Self::EditNoteParticipant
                 | Self::EditNoteEndParticipant
-                | Self::SelectBoxStart
-                | Self::SelectBoxEnd
         )
     }
 
     pub fn is_selecting_from(&self) -> bool {
         matches!(self, Self::SelectFrom | Self::EditSelectFrom)
+    }
+
+    pub fn is_message_text_input(&self) -> bool {
+        matches!(
+            self,
+            Self::InputMessage | Self::EditMessage | Self::InputNoteText | Self::EditNoteText
+        )
     }
 
     pub fn is_text_input(&self) -> bool {
@@ -71,6 +79,7 @@ impl EditorMode {
                 | Self::EditNoteText
                 | Self::InputBoxLabel
                 | Self::InputFrameLabel
+                | Self::InputSectionLabel
                 | Self::InputSavePath
         )
     }
@@ -92,6 +101,7 @@ pub struct EditorState {
     pub message_to: Option<usize>,
     pub status_message: Option<StatusMessage>,
     pub selection: Selection,
+    pub selection_before: Selection,
     pub editing_event_index: Option<usize>,
     pub last_participant_index: Option<usize>,
     pub note_position: NotePosition,
@@ -106,6 +116,8 @@ pub struct EditorState {
     pub frame_start: Option<usize>,
     pub frame_end: Option<usize>,
     pub frame_kind: FragmentKind,
+    /// Event a new divider goes above while its label is typed.
+    pub section_start: Option<usize>,
 }
 
 impl EditorState {
@@ -133,6 +145,7 @@ impl EditorState {
         self.frame_start = None;
         self.frame_end = None;
         self.frame_kind = FragmentKind::default();
+        self.section_start = None;
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -160,6 +173,48 @@ impl EditorState {
         };
 
         (status.created_at.elapsed() < visible_for).then_some(status)
+    }
+
+    /// Aborts a flow; a create flow also gives back the selection from before it started.
+    pub fn cancel(&mut self) {
+        if self.box_start.is_some() || self.frame_start.is_some() || self.section_start.is_some() {
+            self.selection = self.selection_before;
+        }
+        self.reset();
+    }
+
+    /// Events a new frame covers while it is being created: the cursor range while
+    /// choosing its end, the chosen range during the kind and label steps.
+    pub fn frame_selection_range(&self) -> Option<RangeInclusive<usize>> {
+        let start = self.frame_start?;
+        match (&self.mode, self.selection, self.frame_end) {
+            (EditorMode::SelectFrameEnd, Selection::Event(cursor), _) => {
+                Some(start.min(cursor)..=start.max(cursor))
+            }
+            (EditorMode::SelectFrameKind | EditorMode::InputFrameLabel, _, Some(end)) => {
+                Some(start..=end)
+            }
+            _ => None,
+        }
+    }
+
+    /// Participants a new box covers while it is being created, like the frame range.
+    pub fn box_selection_range(&self) -> Option<RangeInclusive<usize>> {
+        let start = self.box_start?;
+        match (&self.mode, self.selection, self.box_end) {
+            (EditorMode::SelectBoxEnd, Selection::Participant(cursor), _) => {
+                Some(start.min(cursor)..=start.max(cursor))
+            }
+            (EditorMode::SelectBoxColor | EditorMode::InputBoxLabel, _, Some(end)) => {
+                Some(start..=end)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn section_preview(&self) -> Option<usize> {
+        self.section_start
+            .filter(|_| self.mode == EditorMode::InputSectionLabel)
     }
 
     pub fn clear_selection(&mut self) {
