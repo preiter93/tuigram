@@ -70,7 +70,7 @@ pub fn render_input_popup(frame: &mut Frame, world: &World) {
         }
         EditorMode::InputBoxLabel => ("Add Box".to_string(), Some("Label:".to_string())),
         EditorMode::InputFrameLabel => ("Frame".to_string(), Some("Label (optional):".to_string())),
-        EditorMode::InputSavePath => ("Save As".to_string(), Some("Path:".to_string())),
+        EditorMode::InputSavePath => ("Save".to_string(), Some("Path:".to_string())),
         _ => return,
     };
 

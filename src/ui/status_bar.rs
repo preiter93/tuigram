@@ -9,7 +9,7 @@ use tui_world::World;
 use super::{EditorMode, EditorState, Selection};
 use crate::{core::SequenceDiagram, theme::Theme};
 
-const DIRTY_HINTS: &str = "E: save  u: undo  ";
+const DIRTY_HINTS: &str = "S: save  u: undo  ";
 
 pub fn render_status_bar(
     frame: &mut Frame,
@@ -52,7 +52,7 @@ pub fn render_status_bar(
         EditorMode::SelectFrameEnd => ("FRAME END", theme.status_select),
         EditorMode::SelectFrameKind => ("FRAME KIND", theme.status_select),
         EditorMode::InputFrameLabel => ("FRAME", theme.status_input),
-        EditorMode::InputSavePath => ("SAVE AS", theme.status_input),
+        EditorMode::InputSavePath => ("SAVE", theme.status_input),
     };
 
     let hints = match mode {

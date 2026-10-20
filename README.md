@@ -68,8 +68,7 @@ Download from [GitHub Releases](https://github.com/preiter93/tuigram/releases)
 | `D` | Delete selected (a selected frame or box is removed, its events/participants stay) |
 | `C` | Clear diagram |
 | `u` / `U` or `Ctrl+r` | Undo / redo (up to 100 steps) |
-| `E` | Save to file (opened file, else `diagram.mmd`) |
-| `S` | Save as (prompts for a path) |
+| `S` | Save (path prompt prefilled with the opened file, else `diagram.mmd`; Enter saves) |
 | `y` | Copy Mermaid to clipboard |
 | `?` | Help (any key closes it) |
 | `Ctrl+c` | Quit (asks if there are unsaved changes) |
@@ -86,7 +85,7 @@ Wide diagrams scroll sideways to follow the selection; `‹` and `›` on the bo
 tuigram diagram.mmd
 ```
 
-`--import diagram.mmd` still works. A missing file starts an empty diagram and is created on save. Press `E` to save back to the opened file (default `diagram.mmd`); a `[+]` marker in the status bar shows unsaved changes. `S` asks for a new path (`~` is expanded, missing directories are not created, an existing file is overwritten without asking) and makes it the save target for later `E` presses. Saving rewrites the file in canonical format, so `%%` comments, blank lines and custom formatting are dropped.
+`--import diagram.mmd` still works. A missing file starts an empty diagram and is created on save. Press `S` to save: the path prompt is prefilled with the opened file (default `diagram.mmd`), so `S` then `Enter` saves in place. Type a different path to save elsewhere (`~` is expanded, missing directories are not created, an existing file is overwritten without asking); it becomes the prefilled path from then on. A `[+]` marker in the status bar shows unsaved changes. Saving rewrites the file in canonical format, so `%%` comments, blank lines and custom formatting are dropped.
 
 Blank lines and `%%` comments are ignored; unsupported syntax is reported with its line number.
 

@@ -204,11 +204,6 @@ fn restore_diagram(
     scroll.offset = scroll.offset.min(event_count.saturating_sub(1));
 }
 
-fn save_diagram(world: &mut World) {
-    let path = world.get::<AppState>().file_path.clone();
-    save_to(world, path);
-}
-
 fn save_to(world: &mut World, path: PathBuf) {
     let mermaid = world.get::<SequenceDiagram>().to_mermaid();
 
@@ -652,9 +647,7 @@ fn normal_keybindings(world: &mut World) {
         }
     });
 
-    kb.bind(NORMAL, 'E', "Save to file", save_diagram);
-
-    kb.bind(NORMAL, 'S', "Save as", |world| {
+    kb.bind(NORMAL, 'S', "Save", |world| {
         let path = world.get::<AppState>().file_path.display().to_string();
         let editor = world.get_mut::<EditorState>();
         editor.mode = EditorMode::InputSavePath;
@@ -2064,7 +2057,8 @@ mod tests {
         world.get_mut::<SequenceDiagram>().add_participant("A");
         assert!(is_dirty(&world));
 
-        save_diagram(&mut world);
+        press_char(&mut world, 'S');
+        press(&mut world, KeyCode::Enter);
 
         let written = fs::read_to_string(&path);
         let _ = fs::remove_file(&path);
@@ -2313,7 +2307,8 @@ mod tests {
         assert_eq!(world.get::<EditorState>().mode, EditorMode::Normal);
 
         world.get_mut::<SequenceDiagram>().add_participant("C");
-        press_char(&mut world, 'E');
+        press_char(&mut world, 'S');
+        press(&mut world, KeyCode::Enter);
         let saved = fs::read_to_string(&path);
         let _ = fs::remove_file(&path);
 

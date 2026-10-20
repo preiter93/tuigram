@@ -132,12 +132,8 @@ const HELP_SECTIONS: &[HelpSection] = &[
         title: "[Other]",
         entries: &[
             HelpEntry {
-                keys: "E",
-                description: "Save to file",
-            },
-            HelpEntry {
                 keys: "S",
-                description: "Save as…",
+                description: "Save (Enter keeps path)",
             },
             HelpEntry {
                 keys: "y",
